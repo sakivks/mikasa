@@ -154,4 +154,10 @@ export class CandleStore {
       stmt.destroySync();
     }
   }
+
+  async allSymbols(): Promise<string[]> {
+    const reader = await this.conn.runAndReadAll(`SELECT DISTINCT symbol FROM candles ORDER BY symbol`);
+    const rows = reader.getRowObjects() as Array<{ symbol: string }>;
+    return rows.map((r) => r.symbol);
+  }
 }
