@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { CandleStore } from '../../data/candle-store';
 import { InstrumentStore } from '../../data/instrument-store';
 import { KiteClient } from '../../data/kite-client';
+import { KiteSource } from '../../data/kite-source';
 import { DataLoader } from '../../data/data-loader';
 import { BacktestEngine } from '../../engine/backtest-engine';
 import { Portfolio } from '../../engine/portfolio';
@@ -61,15 +62,8 @@ export async function runBacktestCli(
             )(token, interval, from, to),
         },
       });
-      const loader = new DataLoader({
-        kite: client,
-        store: candleStore,
-        resolveSymbol: async (s) => {
-          const r = await instrumentStore.resolve(s, 'NSE');
-          if (!r) throw new Error(`unknown symbol: ${s}`);
-          return r;
-        },
-      });
+      const source = new KiteSource({ kite: client, instruments: instrumentStore, exchange: 'NSE' });
+      const loader = new DataLoader({ source, store: candleStore });
       for (const symbol of cfg.symbols) {
         const bars = await loader.load(symbol, fromWithWarmup, to, cfg.interval);
         allBars = allBars.concat(bars);

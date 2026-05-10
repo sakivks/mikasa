@@ -2,6 +2,7 @@ import { KiteConnect } from 'kiteconnect';
 import { CandleStore } from '../../data/candle-store';
 import { InstrumentStore } from '../../data/instrument-store';
 import { KiteClient } from '../../data/kite-client';
+import { KiteSource } from '../../data/kite-source';
 import { DataLoader } from '../../data/data-loader';
 import type { Interval } from '../../types';
 import type { Logger } from '../../util/logger';
@@ -64,15 +65,8 @@ export async function fetchCandles(args: FetchArgs): Promise<number> {
       },
     });
 
-    const loader = new DataLoader({
-      kite: client,
-      store: candleStore,
-      resolveSymbol: async (sym) => {
-        const r = await instrumentStore.resolve(sym, exchange);
-        if (!r) throw new Error(`unknown symbol: ${sym}`);
-        return r;
-      },
-    });
+    const source = new KiteSource({ kite: client, instruments: instrumentStore, exchange });
+    const loader = new DataLoader({ source, store: candleStore });
 
     const rows = await loader.load(args.symbol, args.from, args.to, args.interval);
     args.logger.info({ symbol: args.symbol, count: rows.length }, 'fetch complete');
