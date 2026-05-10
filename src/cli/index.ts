@@ -14,11 +14,19 @@ if (existsSync(_envPath)) {
     if (process.env[m[1]!] === undefined || process.env[m[1]!] === '') process.env[m[1]!] = v;
   }
 }
+import { KiteConnect } from 'kiteconnect';
 import { fetchCandles } from './commands/fetch';
+import { fetchOptions } from './commands/fetch-options';
 import { runBacktestCli } from './commands/backtest';
 import { cacheInfo } from './commands/cache-info';
+import { CandleStore } from '../data/candle-store';
+import { InstrumentStore } from '../data/instrument-store';
+import { KiteClient } from '../data/kite-client';
+import { KiteSource } from '../data/kite-source';
+import { parseEnv } from '../config/env';
 import { createLogger, makeRunId } from '../util/logger';
 import type { Interval } from '../types';
+import type { Underlying } from '../types/options';
 
 const program = new Command();
 program.name('mikasa').description('Algo trading bot CLI').version('0.0.1');
@@ -85,6 +93,73 @@ program
       `Run: ${res.runId}\nReport: ${res.reportPath}\nFinal equity: ${res.finalEquity}\n`,
     );
   });
+
+program
+  .command('fetch-options')
+  .argument('<underlying>', 'NIFTY | BANKNIFTY')
+  .argument('<from>', 'YYYY-MM-DD')
+  .argument('<to>', 'YYYY-MM-DD')
+  .option('--bhavcopy-dir <dir>', 'directory of NSE FO bhavcopy CSVs', process.env.MIKASA_BHAVCOPY_DIR)
+  .option('--token-map <path>', 'JSON file: (underlying|expiryISO|strike|type) -> token', process.env.MIKASA_TOKEN_MAP)
+  .option('--atm-range <n>', 'strikes either side of ATM to fetch', '10')
+  .action(
+    async (
+      underlying: string,
+      from: string,
+      to: string,
+      opts: { bhavcopyDir?: string; tokenMap?: string; atmRange: string },
+    ) => {
+      ensureDataDir();
+      if (underlying !== 'NIFTY' && underlying !== 'BANKNIFTY') {
+        throw new Error(`invalid underlying: ${underlying} (expected NIFTY or BANKNIFTY)`);
+      }
+      if (!opts.bhavcopyDir) {
+        throw new Error('--bhavcopy-dir is required (or set MIKASA_BHAVCOPY_DIR)');
+      }
+      if (!opts.tokenMap) {
+        throw new Error('--token-map is required (or set MIKASA_TOKEN_MAP)');
+      }
+      const logger = createLogger({ runId: makeRunId('fetch-options') });
+      const env = parseEnv();
+      const kite = new KiteConnect({ api_key: env.KITE_API_KEY });
+      kite.setAccessToken(env.KITE_ACCESS_TOKEN);
+      const candleStore = await CandleStore.open(DB_PATH);
+      const instrumentStore = await InstrumentStore.open(INSTRUMENTS_PATH);
+      try {
+        const client = new KiteClient({
+          kite: {
+            getHistoricalData: (token, interval, fromD, toD) =>
+              (
+                kite.getHistoricalData as unknown as (
+                  token: number | string,
+                  interval: string,
+                  from: Date | string,
+                  to: Date | string,
+                ) => Promise<unknown[]>
+              )(token, interval, fromD, toD),
+          },
+        });
+        const source = new KiteSource({
+          kite: client,
+          instruments: instrumentStore,
+          exchange: 'NFO',
+        });
+        await fetchOptions(underlying as Underlying, new Date(`${from}T00:00:00Z`), new Date(`${to}T00:00:00Z`), {
+          source,
+          instruments: instrumentStore,
+          candles: candleStore,
+          logger,
+          tokenMapPath: opts.tokenMap,
+          bhavcopyDir: opts.bhavcopyDir,
+          atmRange: Number(opts.atmRange),
+        });
+        process.stdout.write(`fetch-options complete for ${underlying} ${from}..${to}\n`);
+      } finally {
+        await candleStore.close();
+        await instrumentStore.close();
+      }
+    },
+  );
 
 program
   .command('cache-info')
