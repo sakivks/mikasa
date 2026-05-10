@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Portfolio } from './portfolio';
 import { OrderSide, type Fill, type Fees } from '../types';
+import type { OptionContract, Leg } from '../types/options';
 
 const fees0: Fees = { brokerage: 0, stt: 0, exchange: 0, gst: 0, sebi: 0, stampDuty: 0, total: 0 };
 const fee = (n: number): Fees => ({ ...fees0, brokerage: n, total: n });
@@ -82,5 +83,107 @@ describe('Portfolio', () => {
   it('insufficient cash on BUY throws', () => {
     const p = new Portfolio(1000);
     expect(() => p.applyFill(fill('buy', 100, 100, fee(0)))).toThrow(/insufficient cash/i);
+  });
+});
+
+const expiry = new Date('2025-05-22T10:00:00Z');
+const ceContract: OptionContract = {
+  symbol: 'NIFTY25MAY22000CE',
+  underlying: 'NIFTY',
+  expiry,
+  strike: 22000,
+  optionType: 'CE',
+  lotSize: 75,
+  instrumentToken: 1,
+};
+const peContract: OptionContract = { ...ceContract, symbol: 'NIFTY25MAY22000PE', optionType: 'PE', instrumentToken: 2 };
+
+function zeroFees(): Fees {
+  return { brokerage: 0, stt: 0, exchange: 0, gst: 0, sebi: 0, stampDuty: 0, total: 0 };
+}
+
+describe('Portfolio option positions', () => {
+  it('SELL fill creates short option position; cash credited', () => {
+    const p = new Portfolio(500_000);
+    const leg: Leg = { contract: ceContract, side: OrderSide.SELL, qty: 1 };
+    const f: Fill = {
+      orderId: 'ml-1',
+      symbol: ceContract.symbol,
+      side: OrderSide.SELL,
+      qty: 75,
+      price: 100,
+      ts: new Date(),
+      fees: zeroFees(),
+    };
+    p.applyOptionFill(f, leg);
+    const pos = p.optionPosition(ceContract.symbol);
+    expect(pos!.netQty).toBe(-1);
+    expect(pos!.avgPrice).toBe(100);
+    expect(p.cash).toBeCloseTo(500_000 + 75 * 100, 2);
+  });
+
+  it('BUY-to-close realizes P&L and reduces position', () => {
+    const p = new Portfolio(500_000);
+    const sellLeg: Leg = { contract: ceContract, side: OrderSide.SELL, qty: 1 };
+    const buyLeg: Leg = { contract: ceContract, side: OrderSide.BUY, qty: 1 };
+    p.applyOptionFill(
+      { orderId: '1', symbol: ceContract.symbol, side: OrderSide.SELL, qty: 75, price: 100, ts: new Date(), fees: zeroFees() },
+      sellLeg,
+    );
+    p.applyOptionFill(
+      { orderId: '2', symbol: ceContract.symbol, side: OrderSide.BUY, qty: 75, price: 80, ts: new Date(), fees: zeroFees() },
+      buyLeg,
+    );
+    const pos = p.optionPosition(ceContract.symbol)!;
+    expect(pos.netQty).toBe(0);
+    expect(pos.realizedPnl).toBeCloseTo((100 - 80) * 75, 2);
+    // Cash: +7500 from sell, -6000 from buy = 1500 profit; cash = 500_000 + 1500 = 501_500
+    expect(p.cash).toBeCloseTo(501_500, 2);
+  });
+
+  it('marginRequired uses span-margin estimator on open shorts', () => {
+    const p = new Portfolio(500_000);
+    const sellCe: Leg = { contract: ceContract, side: OrderSide.SELL, qty: 1 };
+    const sellPe: Leg = { contract: peContract, side: OrderSide.SELL, qty: 1 };
+    p.applyOptionFill(
+      { orderId: '1', symbol: ceContract.symbol, side: OrderSide.SELL, qty: 75, price: 100, ts: new Date(), fees: zeroFees() },
+      sellCe,
+    );
+    p.applyOptionFill(
+      { orderId: '2', symbol: peContract.symbol, side: OrderSide.SELL, qty: 75, price: 100, ts: new Date(), fees: zeroFees() },
+      sellPe,
+    );
+    expect(p.marginRequired()).toBeCloseTo(2 * 0.12 * 22000 * 75, 0); // 2 × 198,000 = 396,000
+  });
+
+  it('markToMarket includes option positions in unrealized', () => {
+    const p = new Portfolio(500_000);
+    const sellLeg: Leg = { contract: ceContract, side: OrderSide.SELL, qty: 1 };
+    p.applyOptionFill(
+      { orderId: '1', symbol: ceContract.symbol, side: OrderSide.SELL, qty: 75, price: 100, ts: new Date(), fees: zeroFees() },
+      sellLeg,
+    );
+    p.markToMarket(new Map([[ceContract.symbol, 80]]), new Date('2025-05-22T03:50:00Z'));
+    const last = p.equityCurve()[p.equityCurve().length - 1]!;
+    // Short @ 100, mark @ 80 → (100-80)*75 = 1500 unrealized profit
+    expect(last.unrealized).toBeCloseTo(1500, 2);
+  });
+
+  it('fees are deducted from cash on each fill', () => {
+    const p = new Portfolio(500_000);
+    const leg: Leg = { contract: ceContract, side: OrderSide.SELL, qty: 1 };
+    const fees: Fees = { brokerage: 2.25, stt: 7.5, exchange: 3.77, gst: 1.08, sebi: 0.01, stampDuty: 0, total: 14.61 };
+    const f: Fill = {
+      orderId: '1',
+      symbol: ceContract.symbol,
+      side: OrderSide.SELL,
+      qty: 75,
+      price: 100,
+      ts: new Date(),
+      fees,
+    };
+    p.applyOptionFill(f, leg);
+    // 500_000 + 7500 - 14.61
+    expect(p.cash).toBeCloseTo(507485.39, 2);
   });
 });
