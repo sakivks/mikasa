@@ -91,4 +91,36 @@ describe('renderOptionsSection', () => {
     expect(html).toContain('2025-05-22');
     expect(html).toContain('3375.00'); // gross
   });
+  it('omits the margin stats block when stats are absent', () => {
+    const t1 = new Date('2025-05-22T03:50:00Z');
+    const fills: Fill[] = [
+      fill({ symbol: 'NIFTY-2025-05-22-22000-CE', side: 'sell', price: 100, ts: t1, orderId: 'ml-1' }),
+      fill({ symbol: 'NIFTY-2025-05-22-22000-PE', side: 'sell', price: 95, ts: t1, orderId: 'ml-1' }),
+    ];
+    const html = renderOptionsSection(fills);
+    expect(html).not.toContain('Margin utilization');
+  });
+  it('renders the margin stats block when stats are provided', () => {
+    const t1 = new Date('2025-05-22T03:50:00Z');
+    const t2 = new Date('2025-05-22T09:45:00Z');
+    const fills: Fill[] = [
+      fill({ symbol: 'NIFTY-2025-05-22-22000-CE', side: 'sell', price: 100, ts: t1, orderId: 'ml-1' }),
+      fill({ symbol: 'NIFTY-2025-05-22-22000-PE', side: 'sell', price: 95, ts: t1, orderId: 'ml-1' }),
+      fill({ symbol: 'NIFTY-2025-05-22-22000-CE', side: 'buy', price: 80, ts: t2, orderId: 'ml-2' }),
+      fill({ symbol: 'NIFTY-2025-05-22-22000-PE', side: 'buy', price: 70, ts: t2, orderId: 'ml-2' }),
+    ];
+    const html = renderOptionsSection(fills, {
+      peakMargin: 12_000,
+      avgMargin: 8_000,
+      minMargin: 4_000,
+      peakUtilizationPct: 12.34,
+      avgUtilizationPct: 8.0,
+    });
+    expect(html).toContain('Margin utilization');
+    expect(html).toContain('Peak margin');
+    expect(html).toContain('Avg utilization');
+    // peakUtilizationPct (12.34) is formatted with 1 decimal → 12.3%.
+    expect(html).toContain('12.3%');
+    expect(html).toContain('12000.00');
+  });
 });

@@ -1,4 +1,5 @@
 import type { Fill } from '../types';
+import type { MarginStats } from '../engine/backtest-engine';
 
 export interface OptionsReportRow {
   expiryDate: string;
@@ -89,7 +90,22 @@ function escapeHtml(s: string): string {
   );
 }
 
-export function renderOptionsSection(fills: Fill[]): string {
+export function renderMarginStats(stats: MarginStats | undefined): string {
+  if (!stats) return '';
+  return `
+  <div class="margin-stats">
+    <h4>Margin utilization</h4>
+    <ul>
+      <li>Peak margin: ${stats.peakMargin.toFixed(2)}</li>
+      <li>Avg margin: ${stats.avgMargin.toFixed(2)}</li>
+      <li>Min margin: ${stats.minMargin.toFixed(2)}</li>
+      <li>Peak utilization: ${stats.peakUtilizationPct.toFixed(1)}%</li>
+      <li>Avg utilization: ${stats.avgUtilizationPct.toFixed(1)}%</li>
+    </ul>
+  </div>`;
+}
+
+export function renderOptionsSection(fills: Fill[], marginStats?: MarginStats): string {
   const rows = buildOptionsRows(fills);
   if (rows.length === 0) return '';
 
@@ -122,6 +138,6 @@ export function renderOptionsSection(fills: Fill[]): string {
       <tr><th>Total</th><th></th><th></th><th>${totalGross.toFixed(2)}</th><th>${totalCharges.toFixed(2)}</th><th>${totalNet.toFixed(2)}</th></tr>
     </tfoot>
   </table>
-  <p>Charge drag: ${chargeDrag.toFixed(1)}%</p>
+  <p>Charge drag: ${chargeDrag.toFixed(1)}%</p>${renderMarginStats(marginStats)}
 </section>`;
 }

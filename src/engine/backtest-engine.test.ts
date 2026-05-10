@@ -395,3 +395,82 @@ describe('engine: capital + bankruptcy', () => {
     expect(bankruptcyLog).toBeDefined();
   });
 });
+
+// --- Margin utilization tracking -------------------------------------------------
+
+describe('engine: margin utilization stats', () => {
+  it('tracks margin curve when an options position is open', () => {
+    // Cheap-strike straddle so margin (~12% × 100 × 75 × 2 = ₹1,800) fits in 50k.
+    const portfolio = new Portfolio(50_000);
+    const broker = new BrokerSim({ slippageBps: 0, brokerage: zeroBrokerage });
+    const router = new OrderRouter({ squareoffTime: null });
+    const registry = new IndicatorRegistry();
+    const logger = spyLogger();
+
+    const lowCe: OptionContract = { ...ce, symbol: 'TINYCE2', strike: 100, instrumentToken: 21 };
+    const lowPe: OptionContract = { ...pe, symbol: 'TINYPE2', strike: 100, instrumentToken: 22 };
+
+    class SellTinyStraddle extends Strategy {
+      private submitted = false;
+      init(): void {}
+      onBar(_bar: Candle, ctx: StrategyContext): void {
+        if (this.submitted) return;
+        this.submitted = true;
+        ctx.submitMultiLeg({
+          legs: [
+            { contract: lowCe, side: OrderSide.SELL, qty: 1 },
+            { contract: lowPe, side: OrderSide.SELL, qty: 1 },
+          ],
+          reason: 'entry',
+        });
+      }
+    }
+
+    const symC = lowCe.symbol;
+    const symP = lowPe.symbol;
+    const candles: Candle[] = [
+      optBar(symC, '2025-05-22T03:45:00Z', 10),
+      optBar(symP, '2025-05-22T03:45:00Z', 10),
+      optBar(symC, '2025-05-22T03:50:00Z', 10),
+      optBar(symP, '2025-05-22T03:50:00Z', 10),
+      optBar(symC, '2025-05-22T03:55:00Z', 12, 12),
+      optBar(symP, '2025-05-22T03:55:00Z', 12, 12),
+    ];
+
+    const engine = new BacktestEngine({
+      candles,
+      strategy: new SellTinyStraddle(),
+      portfolio,
+      broker,
+      router,
+      indicators: registry,
+      logger,
+      warmupBars: 0,
+      params: {},
+    });
+    const result = engine.run();
+
+    expect(result.marginStats).toBeDefined();
+    const m = result.marginStats!;
+    expect(m.peakMargin).toBeGreaterThan(0);
+    expect(m.avgMargin).toBeGreaterThan(0);
+    expect(m.minMargin).toBeGreaterThan(0);
+    expect(m.peakUtilizationPct).toBeGreaterThan(0);
+    expect(m.avgUtilizationPct).toBeGreaterThan(0);
+    expect(m.peakMargin).toBeGreaterThanOrEqual(m.avgMargin);
+    expect(m.avgMargin).toBeGreaterThanOrEqual(m.minMargin);
+    // Utilization should match peak/initialCapital exactly.
+    expect(m.peakUtilizationPct).toBeCloseTo((m.peakMargin / 50_000) * 100, 6);
+  });
+
+  it('omits marginStats when no options positions are ever open (equity-only run)', () => {
+    const candles = [
+      cb('2025-01-02T03:45:00Z', 100, 100),
+      cb('2025-01-02T03:50:00Z', 110, 110),
+      cb('2025-01-02T03:55:00Z', 120, 120),
+    ];
+    const engine = makeEngine(new BuyOnceStrategy(), candles);
+    const result = engine.run();
+    expect(result.marginStats).toBeUndefined();
+  });
+});

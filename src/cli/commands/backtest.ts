@@ -172,6 +172,7 @@ export async function runBacktestCli(
       equityCurve: result.equityCurve,
       trades,
       fills: result.fills,
+      ...(result.marginStats ? { marginStats: result.marginStats } : {}),
     });
 
     mkdirSync(args.reportsDir, { recursive: true });

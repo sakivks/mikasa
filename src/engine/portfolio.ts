@@ -3,6 +3,7 @@ import type { Leg, OptionPosition } from '../types/options';
 import { estimateMargin } from './brokerage/span-margin';
 
 export class Portfolio {
+  private readonly _initialCapital: number;
   private _cash: number;
   private _realized = 0;
   private readonly _positions = new Map<string, Position>();
@@ -11,7 +12,12 @@ export class Portfolio {
 
   constructor(initialCapital: number) {
     if (initialCapital <= 0) throw new Error('initialCapital must be > 0');
+    this._initialCapital = initialCapital;
     this._cash = initialCapital;
+  }
+
+  get initialCapital(): number {
+    return this._initialCapital;
   }
 
   get cash(): number {

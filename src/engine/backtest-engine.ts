@@ -62,12 +62,40 @@ export interface BacktestEngineOpts {
   params: Record<string, unknown>;
 }
 
+export interface MarginStats {
+  peakMargin: number;
+  avgMargin: number;
+  minMargin: number;
+  peakUtilizationPct: number;
+  avgUtilizationPct: number;
+}
+
 export interface BacktestResult {
   fills: Fill[];
   equityCurve: EquitySnapshot[];
   finalEquity: number;
   /** True when equity went non-positive during the run and forced exits were issued. */
   bankruptcy?: boolean;
+  /** Present when at least one bar had a positive margin requirement. */
+  marginStats?: MarginStats;
+}
+
+function summarizeMargin(
+  marginCurve: Array<{ ts: Date; margin: number }>,
+  initialCapital: number,
+): MarginStats | undefined {
+  if (marginCurve.length === 0) return undefined;
+  const values = marginCurve.map((p) => p.margin);
+  const peak = Math.max(...values);
+  const avg = values.reduce((s, v) => s + v, 0) / values.length;
+  const min = Math.min(...values);
+  return {
+    peakMargin: peak,
+    avgMargin: avg,
+    minMargin: min,
+    peakUtilizationPct: (peak / initialCapital) * 100,
+    avgUtilizationPct: (avg / initialCapital) * 100,
+  };
 }
 
 export function runBacktest(opts: BacktestEngineOpts): BacktestResult {
@@ -108,6 +136,10 @@ export class BacktestEngine {
     let pending: ReturnType<OrderRouter['drain']> = [];
     // Pending multi-leg orders waiting for next bars on every leg's symbol.
     let pendingMl: MultiLegOrder[] = [];
+    // Per-bar margin samples for utilization stats — we only record bars where any
+    // option position has a positive margin requirement so idle stretches don't
+    // dilute the average.
+    const marginCurve: Array<{ ts: Date; margin: number }> = [];
     // Once true, the engine stops feeding new bars to strategy.onBar — only the
     // forced-exit reversal orders that were submitted at bankruptcy time will fill.
     let bankrupt = false;
@@ -221,6 +253,13 @@ export class BacktestEngine {
       // otherwise other open positions would mark to 0 and corrupt the equity curve / MDD.
       portfolio.markToMarket(lastCloses, bar.ts);
 
+      // Sample margin requirement after MTM. Skip zero-margin bars so the average
+      // reflects utilization while positions are actually open.
+      const marginNow = portfolio.marginRequired();
+      if (marginNow > 0) {
+        marginCurve.push({ ts: bar.ts, margin: marginNow });
+      }
+
       // Bankruptcy detection: equity ≤ 0 means losses exceeded available capital.
       // Bundle reversals for every open option position into a single multi-leg
       // order so they fill atomically on the next bar. After this, the strategy
@@ -301,6 +340,8 @@ export class BacktestEngine {
       finalEquity: equity.length > 0 ? equity[equity.length - 1]!.equity : portfolio.cash,
     };
     if (bankrupt) result.bankruptcy = true;
+    const marginStats = summarizeMargin(marginCurve, portfolio.initialCapital);
+    if (marginStats) result.marginStats = marginStats;
     return result;
   }
 
