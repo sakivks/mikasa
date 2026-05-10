@@ -14,6 +14,7 @@ import { OrderRouter } from '../../engine/order-router';
 import { IndicatorRegistry } from '../../indicators/registry';
 import { resolveStrategy } from '../../strategies/registry';
 import { zerodhaIntraday, zeroBrokerage } from '../../engine/brokerage/zerodha-intraday';
+import { zerodhaDelivery } from '../../engine/brokerage/zerodha-delivery';
 import { computeMetrics, buildTrades } from '../../report/metrics';
 import { renderHtml } from '../../report/html-report';
 import { loadRunConfig, type RunConfig } from '../../types/run-config';
@@ -88,7 +89,12 @@ export async function runBacktestCli(
     const portfolio = new Portfolio(cfg.capital);
     const broker = new BrokerSim({
       slippageBps: cfg.slippage_bps,
-      brokerage: cfg.brokerage === 'zero' ? zeroBrokerage : zerodhaIntraday,
+      brokerage:
+        cfg.brokerage === 'zero'
+          ? zeroBrokerage
+          : cfg.brokerage === 'zerodha-delivery'
+            ? zerodhaDelivery
+            : zerodhaIntraday,
     });
     const router = new OrderRouter({ squareoffTime: cfg.squareoff_time });
     const indicators = new IndicatorRegistry();

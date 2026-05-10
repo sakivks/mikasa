@@ -100,6 +100,22 @@ describe('RunConfigSchema', () => {
     expect(cfgYahoo.source).toBe('yahoo');
   });
 
+  it("accepts brokerage: 'zerodha-delivery'", () => {
+    const cfg = RunConfigSchema.parse({
+      strategy: 'DailyTrend',
+      params: {},
+      symbols: ['INFY'],
+      from: '2025-01-01',
+      to: '2025-01-31',
+      interval: 'day',
+      capital: 100000,
+      slippage_bps: 0,
+      brokerage: 'zerodha-delivery',
+      seed: 0,
+    });
+    expect(cfg.brokerage).toBe('zerodha-delivery');
+  });
+
   it('rejects empty symbols', () => {
     expect(() =>
       RunConfigSchema.parse({
