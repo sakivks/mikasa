@@ -62,9 +62,16 @@ export class BacktestEngine {
     for (let i = 0; i < candles.length; i++) {
       const bar = candles[i]!;
 
-      // Process pending orders against THIS bar
+      // Process pending orders against THIS bar — but only for orders whose
+      // symbol matches this bar's symbol. Multi-symbol backtests interleave
+      // bars across instruments, so an order on stock A must wait for A's
+      // next bar to fill, not fire against B's open price.
       const stillPending: typeof pending = [];
       for (const order of pending) {
+        if (order.intent.symbol !== bar.symbol) {
+          stillPending.push(order);
+          continue;
+        }
         const res = broker.processOrder(order, bar);
         if (res.fill) {
           try {
