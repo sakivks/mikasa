@@ -64,6 +64,7 @@ export interface Fill {
   price: number;
   ts: Date;
   fees: Fees;
+  multiLegOrderId?: string;       // present when this fill is part of a multi-leg basket
 }
 
 export interface Position {

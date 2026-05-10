@@ -1,5 +1,7 @@
 import { OrderSide, OrderStatus, OrderType, type Candle, type Fill, type Order } from '../types';
+import type { MultiLegOrder } from '../types/options';
 import type { BrokerageFn } from './brokerage/zerodha-intraday';
+import { calcOptionLegCharges } from './brokerage/options-charges';
 
 export interface BrokerSimOpts {
   slippageBps: number;
@@ -10,6 +12,14 @@ export interface ProcessResult {
   order: Order;
   fill: Fill | null;
 }
+
+export interface MultiLegResult {
+  fills: Fill[];
+  rejection?: { reason: string };
+}
+
+// 1 tick = ₹0.05 on NSE F&O.
+const OPTION_TICK = 0.05;
 
 export class BrokerSim {
   constructor(private readonly opts: BrokerSimOpts) {}
@@ -66,5 +76,43 @@ export class BrokerSim {
   private applySlippage(side: OrderSide, price: number): number {
     const bps = this.opts.slippageBps;
     return side === OrderSide.BUY ? price * (1 + bps / 10_000) : price * (1 - bps / 10_000);
+  }
+
+  /**
+   * Process a multi-leg options order atomically against next bars (one per leg symbol).
+   * Either every leg fills at its next bar's open ± 1 tick, or none do (no partial fills).
+   * Charges are computed per leg via `calcOptionLegCharges` (Zerodha schedule).
+   */
+  processMultiLeg(order: MultiLegOrder, nextBars: Map<string, Candle>): MultiLegResult {
+    // Atomicity gate: if any leg lacks a next bar, reject the whole basket.
+    for (const leg of order.legs) {
+      if (!nextBars.has(leg.contract.symbol)) {
+        return { fills: [], rejection: { reason: 'no-liquidity' } };
+      }
+    }
+
+    const fills: Fill[] = [];
+    for (const leg of order.legs) {
+      const bar = nextBars.get(leg.contract.symbol)!;
+      const slippage = leg.side === OrderSide.BUY ? +OPTION_TICK : -OPTION_TICK;
+      const price = bar.open + slippage;
+      const fees = calcOptionLegCharges({
+        contract: leg.contract,
+        side: leg.side,
+        qty: leg.qty, // lots — calcOptionLegCharges multiplies by lotSize internally
+        price,
+      });
+      fills.push({
+        orderId: order.id,
+        multiLegOrderId: order.id,
+        symbol: leg.contract.symbol,
+        side: leg.side,
+        qty: leg.qty * leg.contract.lotSize, // shares (matches existing Fill semantics)
+        price,
+        ts: bar.ts,
+        fees,
+      });
+    }
+    return { fills };
   }
 }

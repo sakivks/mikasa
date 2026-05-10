@@ -1,10 +1,13 @@
 import { OrderSide, type EquitySnapshot, type Fill, type Position } from '../types';
+import type { Leg } from '../types/options';
 
 export class Portfolio {
   private _cash: number;
   private _realized = 0;
   private readonly _positions = new Map<string, Position>();
   private readonly _equity: EquitySnapshot[] = [];
+  // Multi-leg fills land here in Task 9; Task 10 will replace with real position accounting.
+  private readonly _optionFills: Array<{ fill: Fill; leg: Leg }> = [];
 
   constructor(initialCapital: number) {
     if (initialCapital <= 0) throw new Error('initialCapital must be > 0');
@@ -27,9 +30,23 @@ export class Portfolio {
     return this._positions.get(symbol) ?? null;
   }
 
-  // Stub: real implementation lands in Task 9 (options portfolio extension).
+  // Stub: real implementation lands in Task 10 (options portfolio extension).
   optionPosition(_symbol: string): import('../types/options').OptionPosition | null {
     return null;
+  }
+
+  /**
+   * Stub: records a multi-leg option fill for inspection. Real position accounting,
+   * cash impact, margin and PnL land in Task 10. Intentionally never throws so that
+   * the engine's multi-leg loop can run end-to-end with the rest of the system.
+   */
+  applyOptionFill(fill: Fill, leg: Leg): void {
+    this._optionFills.push({ fill, leg });
+  }
+
+  /** Test/inspection accessor for the stubbed option fills (Task 9). */
+  optionFills(): ReadonlyArray<{ fill: Fill; leg: Leg }> {
+    return this._optionFills;
   }
 
   equityCurve(): EquitySnapshot[] {

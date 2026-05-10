@@ -1,4 +1,5 @@
 import { OrderSide, OrderStatus, OrderType, type Order, type OrderIntent, type Position } from '../types';
+import type { MultiLegOrder } from '../types/options';
 import { isSquareoffBarIST } from '../util/time';
 
 export interface OrderRouterOpts {
@@ -7,7 +8,9 @@ export interface OrderRouterOpts {
 
 export class OrderRouter {
   private readonly _queue: Order[] = [];
+  private readonly _multiLegQueue: MultiLegOrder[] = [];
   private nextId = 1;
+  private nextMultiLegId = 1;
   private squareoffEmittedAt: number | null = null;
 
   constructor(private readonly opts: OrderRouterOpts) {}
@@ -23,9 +26,16 @@ export class OrderRouter {
     return id;
   }
 
-  // Stub: real implementation lands in Task 10 (multi-leg routing).
-  submitMultiLeg(_order: Omit<import('../types/options').MultiLegOrder, 'id' | 'ts'>): string {
-    throw new Error('submitMultiLeg not yet implemented (Task 9)');
+  submitMultiLeg(order: Omit<MultiLegOrder, 'id' | 'ts'>): string {
+    const id = `ml-${this.nextMultiLegId++}`;
+    // ts is assigned by the engine when it processes the order against the current bar.
+    const full: MultiLegOrder = { ...order, id, ts: new Date(0) };
+    this._multiLegQueue.push(full);
+    return id;
+  }
+
+  drainMultiLeg(): MultiLegOrder[] {
+    return this._multiLegQueue.splice(0, this._multiLegQueue.length);
   }
 
   queued(): Order[] {

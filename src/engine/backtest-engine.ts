@@ -1,6 +1,7 @@
 import type { Logger } from '../util/logger';
 import type { Candle, EquitySnapshot, Fees, Fill, OrderId, OrderIntent, Position } from '../types';
 import { OrderStatus } from '../types';
+import type { MultiLegOrder } from '../types/options';
 import type { IndicatorRegistry } from '../indicators/registry';
 import type { OptionSubscription, Strategy, StrategyContext } from '../strategies/strategy';
 import type { Portfolio } from './portfolio';
@@ -66,9 +67,57 @@ export class BacktestEngine {
 
     // Pending orders carry across bars; queued() reads-write; engine processes against next bar.
     let pending: ReturnType<OrderRouter['drain']> = [];
+    // Pending multi-leg orders waiting for next bars on every leg's symbol.
+    let pendingMl: MultiLegOrder[] = [];
+    // Most recent bar seen per symbol — serves as "next bar" for orders submitted in
+    // earlier iterations. Updated at the START of each iteration so an ML submitted at
+    // bar t becomes eligible to fill at bar t+1 (or later, on a leg's own next bar).
+    const nextBarByContract = new Map<string, Candle>();
 
     for (let i = 0; i < candles.length; i++) {
       const bar = candles[i]!;
+
+      // Refresh "next bar" for this symbol BEFORE we attempt multi-leg fills, so a
+      // pending ML can pick up the freshly-arrived bar as its next-bar-after-submission.
+      nextBarByContract.set(bar.symbol, bar);
+
+      // Try to fill pending multi-leg orders. An ML fills only when EVERY leg has a
+      // next bar with ts > order.ts. Until then it stays pending. Atomicity is enforced
+      // inside BrokerSim.processMultiLeg — we just gate on bar availability here.
+      const stillPendingMl: MultiLegOrder[] = [];
+      for (const ml of pendingMl) {
+        const legBars = new Map<string, Candle>();
+        let ready = true;
+        for (const leg of ml.legs) {
+          const candidate = nextBarByContract.get(leg.contract.symbol);
+          if (!candidate || candidate.ts.getTime() <= ml.ts.getTime()) {
+            ready = false;
+            break;
+          }
+          legBars.set(leg.contract.symbol, candidate);
+        }
+        if (!ready) {
+          stillPendingMl.push(ml);
+          continue;
+        }
+        const res = broker.processMultiLeg(ml, legBars);
+        if (res.rejection) {
+          logger.warn({ mlId: ml.id, reason: res.rejection.reason }, 'multi-leg order rejected');
+          continue;
+        }
+        for (let li = 0; li < res.fills.length; li++) {
+          const fill = res.fills[li]!;
+          const leg = ml.legs[li]!;
+          try {
+            portfolio.applyOptionFill(fill, leg);
+            fills.push(fill);
+            strategy.onOrderFill?.(fill, ctx);
+          } catch (err) {
+            logger.warn({ mlId: ml.id, err: (err as Error).message }, 'multi-leg fill apply failed');
+          }
+        }
+      }
+      pendingMl = stillPendingMl;
 
       // Process pending orders against THIS bar — but only for orders whose
       // symbol matches this bar's symbol. Multi-symbol backtests interleave
@@ -123,6 +172,14 @@ export class BacktestEngine {
 
       // New orders submitted this bar enter pending queue, joined with carryovers
       pending = stillPending.concat(router.drain());
+
+      // Newly submitted multi-leg orders inherit this bar's ts (so they fill on a
+      // strictly later bar) and join the pending ML queue.
+      const newMl = router.drainMultiLeg();
+      for (const ml of newMl) {
+        ml.ts = bar.ts;
+        pendingMl.push(ml);
+      }
     }
 
     // Final fallback: if positions remain open after last bar AND there are unfilled pending orders
