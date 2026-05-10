@@ -90,6 +90,36 @@ program
     }
   });
 
+program
+  .command('auth')
+  .argument('[request_token]', 'Kite request_token from the login redirect URL')
+  .option('--login', 'Print the Kite login URL and exit')
+  .action(async (requestToken: string | undefined, opts: { login?: boolean }) => {
+    const logger = createLogger({ runId: makeRunId('auth') });
+    const envPath = join(process.cwd(), '.env');
+    if (opts.login) {
+      const fs = await import('node:fs');
+      if (!fs.existsSync(envPath)) throw new Error('.env not found in cwd');
+      const text = fs.readFileSync(envPath, 'utf8');
+      const m = text.match(/^\s*KITE_API_KEY\s*=\s*(.*)$/m);
+      if (!m) throw new Error('KITE_API_KEY missing in .env');
+      const apiKey = m[1]!.trim().replace(/^["']|["']$/g, '');
+      const { loginUrl } = await import('./commands/auth');
+      process.stdout.write(`${loginUrl(apiKey)}\n`);
+      return;
+    }
+    if (!requestToken) {
+      process.stderr.write('Usage: mikasa auth <request_token>\n  or:  mikasa auth --login\n');
+      process.exit(1);
+    }
+    const { authenticate } = await import('./commands/auth');
+    const result = await authenticate({ requestToken, envPath, logger });
+    process.stdout.write(
+      `Access token updated. user=${result.userId ?? '?'} (${result.userName ?? '?'})\n`,
+    );
+    process.stdout.write(`KITE_ACCESS_TOKEN written to ${envPath}\n`);
+  });
+
 program.parseAsync(process.argv).catch((err) => {
   process.stderr.write(`error: ${(err as Error).message}\n`);
   process.exit(1);
