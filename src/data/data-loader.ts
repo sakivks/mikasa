@@ -1,13 +1,10 @@
 import type { Candle, Interval } from '../types';
 import type { CandleStore, CoverageRange } from './candle-store';
-import type { KiteClient } from './kite-client';
-
-export type SymbolResolver = (symbol: string) => Promise<{ tradingsymbol: string; instrumentToken: number }>;
+import type { HistoricalSource } from './source';
 
 export interface DataLoaderOpts {
-  kite: KiteClient;
+  source: HistoricalSource;
   store: CandleStore;
-  resolveSymbol: SymbolResolver;
 }
 
 export class DataLoader {
@@ -16,21 +13,17 @@ export class DataLoader {
   async load(symbol: string, from: Date, to: Date, interval: Interval): Promise<Candle[]> {
     const cov = await this.opts.store.coverage(symbol, interval);
     const missing = subtractCoverage({ from, to }, cov);
-    if (missing.length > 0) {
-      const { instrumentToken } = await this.opts.resolveSymbol(symbol);
-      for (const m of missing) {
-        const fetched = await this.opts.kite.getHistorical({
-          symbol,
-          instrumentToken,
-          interval,
-          from: m.from,
-          to: m.to,
-        });
-        if (fetched.length > 0) {
-          await this.opts.store.upsert(fetched);
-        }
-        await this.opts.store.recordCoverage(symbol, interval, m.from, m.to);
+    for (const m of missing) {
+      const fetched = await this.opts.source.getHistorical({
+        symbol,
+        interval,
+        from: m.from,
+        to: m.to,
+      });
+      if (fetched.length > 0) {
+        await this.opts.store.upsert(fetched);
       }
+      await this.opts.store.recordCoverage(symbol, interval, m.from, m.to);
     }
     return this.opts.store.query(symbol, from, to, interval);
   }
