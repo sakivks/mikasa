@@ -167,6 +167,74 @@ describe('Portfolio option positions', () => {
     const last = p.equityCurve()[p.equityCurve().length - 1]!;
     // Short @ 100, mark @ 80 → (100-80)*75 = 1500 unrealized profit
     expect(last.unrealized).toBeCloseTo(1500, 2);
+    // Equity must NOT double-count entry premium. Cash = 507_500 (pre-MTM credit),
+    // option market value = -75 × 80 = -6000 (liability to close), so:
+    //   equity = 507_500 + 0 + (-6000) = 501_500
+    // (Equivalently: 500_000 initial + 1_500 unrealized profit.)
+    expect(last.equity).toBeCloseTo(501_500, 2);
+  });
+
+  it('full reversal: short 1 then buy 2 flips to long 1 at the new fill price', () => {
+    const p = new Portfolio(500_000);
+    const sellLeg: Leg = { contract: ceContract, side: OrderSide.SELL, qty: 1 };
+    const buyLeg: Leg = { contract: ceContract, side: OrderSide.BUY, qty: 2 };
+    p.applyOptionFill(
+      { orderId: '1', symbol: ceContract.symbol, side: OrderSide.SELL, qty: 75, price: 100, ts: new Date(), fees: zeroFees() },
+      sellLeg,
+    );
+    p.applyOptionFill(
+      { orderId: '2', symbol: ceContract.symbol, side: OrderSide.BUY, qty: 150, price: 80, ts: new Date(), fees: zeroFees() },
+      buyLeg,
+    );
+    const pos = p.optionPosition(ceContract.symbol)!;
+    expect(pos.netQty).toBe(+1);
+    expect(pos.avgPrice).toBe(80);
+    // Realized: closing the short leg at 80 → (100 - 80) × 75 = 1500
+    expect(pos.realizedPnl).toBeCloseTo(1500, 2);
+    // Cash: 500_000 + 7500 (sell credit) - 12_000 (buy debit) = 495_500
+    expect(p.cash).toBeCloseTo(495_500, 2);
+  });
+
+  it('re-open from netQty=0 resets contract+avgPrice to the new fill', () => {
+    const p = new Portfolio(500_000);
+    const sellLeg: Leg = { contract: ceContract, side: OrderSide.SELL, qty: 1 };
+    const buyLeg: Leg = { contract: ceContract, side: OrderSide.BUY, qty: 1 };
+    const reopenLeg: Leg = { contract: ceContract, side: OrderSide.SELL, qty: 1 };
+    p.applyOptionFill(
+      { orderId: '1', symbol: ceContract.symbol, side: OrderSide.SELL, qty: 75, price: 100, ts: new Date(), fees: zeroFees() },
+      sellLeg,
+    );
+    p.applyOptionFill(
+      { orderId: '2', symbol: ceContract.symbol, side: OrderSide.BUY, qty: 75, price: 80, ts: new Date(), fees: zeroFees() },
+      buyLeg,
+    );
+    // After close: netQty 0
+    expect(p.optionPosition(ceContract.symbol)!.netQty).toBe(0);
+    // Re-open at a new price
+    p.applyOptionFill(
+      { orderId: '3', symbol: ceContract.symbol, side: OrderSide.SELL, qty: 75, price: 90, ts: new Date(), fees: zeroFees() },
+      reopenLeg,
+    );
+    const pos = p.optionPosition(ceContract.symbol)!;
+    expect(pos.netQty).toBe(-1);
+    expect(pos.avgPrice).toBe(90);
+  });
+
+  it('same-direction stacking weights avgPrice by absolute qty', () => {
+    const p = new Portfolio(500_000);
+    const sellLeg1: Leg = { contract: ceContract, side: OrderSide.SELL, qty: 1 };
+    const sellLeg2: Leg = { contract: ceContract, side: OrderSide.SELL, qty: 1 };
+    p.applyOptionFill(
+      { orderId: '1', symbol: ceContract.symbol, side: OrderSide.SELL, qty: 75, price: 100, ts: new Date(), fees: zeroFees() },
+      sellLeg1,
+    );
+    p.applyOptionFill(
+      { orderId: '2', symbol: ceContract.symbol, side: OrderSide.SELL, qty: 75, price: 120, ts: new Date(), fees: zeroFees() },
+      sellLeg2,
+    );
+    const pos = p.optionPosition(ceContract.symbol)!;
+    expect(pos.netQty).toBe(-2);
+    expect(pos.avgPrice).toBeCloseTo(110, 6); // (100*1 + 120*1) / 2
   });
 
   it('fees are deducted from cash on each fill', () => {

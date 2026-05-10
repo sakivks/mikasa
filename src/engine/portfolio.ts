@@ -153,15 +153,20 @@ export class Portfolio {
       unrealized += (px - p.avgPrice) * p.qty;
       positionsMarketValue += px * p.qty;
     }
+    let optionMarketValue = 0;
     let optionUnrealized = 0;
     for (const op of this._options.values()) {
       if (op.netQty === 0) continue;
       const px = prices.get(op.contract.symbol);
       if (px === undefined) continue;
-      const shares = Math.abs(op.netQty) * op.contract.lotSize;
+      // Signed share quantity: negative for shorts, positive for longs.
+      // For shorts, cash already contains the entry premium credit, so equity
+      // reconciles via a *negative* market-value contribution (liability to close).
+      const signedShares = op.netQty * op.contract.lotSize;
+      optionMarketValue += signedShares * px;
       // Short profits when premium drops; long profits when premium rises.
       const direction = op.netQty < 0 ? op.avgPrice - px : px - op.avgPrice;
-      optionUnrealized += direction * shares;
+      optionUnrealized += direction * Math.abs(signedShares);
     }
     unrealized += optionUnrealized;
     const snap: EquitySnapshot = {
@@ -169,7 +174,7 @@ export class Portfolio {
       cash: this._cash,
       unrealized,
       realized: this._realized,
-      equity: this._cash + positionsMarketValue + optionUnrealized,
+      equity: this._cash + positionsMarketValue + optionMarketValue,
     };
     this._equity.push(snap);
     return snap;
