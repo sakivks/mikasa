@@ -91,3 +91,5 @@ export interface EquitySnapshot {
   realized: number;
   equity: number;         // cash + unrealized + realized
 }
+
+export type { OptionContract, Leg, MultiLegOrder, OptionPosition, OptionType, Underlying } from './options';
