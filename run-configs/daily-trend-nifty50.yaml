@@ -1,0 +1,61 @@
+strategy: DailyTrend
+params:
+  fast: 50
+  slow: 200
+  fraction: 0.05
+symbols:
+  - RELIANCE
+  - HDFCBANK
+  - ICICIBANK
+  - INFY
+  - TCS
+  - LT
+  - BHARTIARTL
+  - AXISBANK
+  - HINDUNILVR
+  - ITC
+  - KOTAKBANK
+  - SBIN
+  - BAJFINANCE
+  - ASIANPAINT
+  - MARUTI
+  - HCLTECH
+  - SUNPHARMA
+  - TITAN
+  - NESTLEIND
+  - ULTRACEMCO
+  - WIPRO
+  - BAJAJFINSV
+  - NTPC
+  - POWERGRID
+  - ONGC
+  - TATASTEEL
+  - ADANIENT
+  - ADANIPORTS
+  - COALINDIA
+  - JSWSTEEL
+  - GRASIM
+  - HINDALCO
+  - TECHM
+  - CIPLA
+  - DRREDDY
+  - HEROMOTOCO
+  - INDUSINDBK
+  - BRITANNIA
+  - EICHERMOT
+  - BPCL
+  - APOLLOHOSP
+  - TATACONSUM
+  - SBILIFE
+  - HDFCLIFE
+  - SHRIRAMFIN
+  - TRENT
+from: 2024-05-15
+to: 2026-05-09
+interval: day
+capital: 1000000
+slippage_bps: 5
+brokerage: zerodha-delivery
+warmup_bars: 60
+squareoff_time: null
+seed: 42
