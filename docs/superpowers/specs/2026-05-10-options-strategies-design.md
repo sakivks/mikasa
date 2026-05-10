@@ -145,22 +145,13 @@ If NSE archive proves unreliable or tokens cannot be resolved for older expiries
 
 #### Multi-instrument time loop
 
-Replace the current single-symbol loop:
+The existing `BacktestEngine` already handles multi-symbol via a merged-sorted candle stream (`Candle[]` interleaved across symbols, monotonic in `ts`), tracks last-known close per symbol, and marks all open positions on each bar. **No changes to the time loop itself are needed.**
 
-```ts
-// engine.run(config)
-const subscribed: Map<string, Candle[]> = loadAll(config.instruments);
-const timeline: Date[] = mergedSortedTimestamps(subscribed);
-for (const ts of timeline) {
-  const snapshot = snapshotAt(subscribed, ts);          // Map<symbol, Candle | null>
-  const intents = strategy.onBar(ts, snapshot, portfolio, ctx);
-  for (const order of intents) brokerSim.submit(order, ts);
-  brokerSim.fillNextBar();
-  portfolio.markToMarket(snapshot);
-}
-```
+What needs to change is the strategy-facing context: options strategies must (a) read last-known prices of *other* symbols at the current bar's `ts` to make multi-leg decisions, and (b) submit multi-leg orders. Both are additions to `StrategyContext`, not engine-loop changes.
 
-Bars may be unaligned (illiquid OTM contracts skip minutes). `snapshot[symbol]` may be `null`; strategies must tolerate.
+`onBar(bar, ctx)` is still called once per merged bar with that bar's symbol. A strategy that triggers on the spot bar (e.g., `bar.symbol === 'NIFTY 50'` at `09:20`) reads ATM CE/PE last closes via `ctx.lastClose(symbol)` and emits a `MultiLegOrder`.
+
+For illiquid OTM contracts that skip minutes, `ctx.lastClose(symbol)` returns the most recently seen close (or `undefined` if never seen). Strategies must tolerate `undefined`.
 
 #### Multi-leg fill semantics
 
@@ -178,16 +169,31 @@ Bars may be unaligned (illiquid OTM contracts skip minutes). `snapshot[symbol]` 
 
 #### Strategy interface
 
+The existing class-based interface is preserved:
+
 ```ts
-interface Strategy {
-  onBar(ts: Date, snap: Snapshot, port: Portfolio, ctx: Context): Array<OrderIntent | MultiLegOrder>;
-  init?(ctx: Context): void;        // declare instrument subscriptions
+abstract class Strategy {
+  abstract init(ctx: StrategyContext): void;
+  abstract onBar(bar: Candle, ctx: StrategyContext): void;
+  onOrderFill?(fill: Fill, ctx: StrategyContext): void;
+  onOrderRejected?(reason: string, intent: OrderIntent, ctx: StrategyContext): void;
 }
 ```
 
-`init` lets a strategy enumerate the contracts it needs (e.g., "for each weekly expiry in [from, to], subscribe ATM±10 CE+PE 1m") so the engine knows what to load.
+`StrategyContext` is **extended** (additive, no breaking change) with:
 
-**Backwards compat**: existing equity strategies emit `OrderIntent[]` only; engine handles the union transparently.
+```ts
+interface StrategyContext {
+  // ...existing fields...
+  lastClose(symbol: string): number | undefined;            // last close seen for any subscribed symbol
+  submitMultiLeg(order: Omit<MultiLegOrder, 'id' | 'ts'>): string;   // returns multi-leg order id
+  optionPosition(symbol: string): OptionPosition | null;
+}
+```
+
+`init` is also where a strategy enumerates the option contracts it needs (e.g., "for each weekly expiry in [from, to], subscribe ATM±10 CE+PE 1m") via a new `ctx.subscribeOptions(spec)` helper that the engine reads before the loop starts to load the right candles.
+
+**Backwards compat**: existing equity strategies use `submitOrder` and `position`; engine handles option additions transparently.
 
 ### Strategy logic
 
