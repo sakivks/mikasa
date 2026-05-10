@@ -1,7 +1,19 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+
+// Load .env from cwd if present. Lightweight, no dotenv dep. Existing process.env wins.
+const _envPath = join(process.cwd(), '.env');
+if (existsSync(_envPath)) {
+  for (const line of readFileSync(_envPath, 'utf8').split('\n')) {
+    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/);
+    if (!m) continue;
+    let v = m[2]!.trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    if (process.env[m[1]!] === undefined || process.env[m[1]!] === '') process.env[m[1]!] = v;
+  }
+}
 import { fetchCandles } from './commands/fetch';
 import { runBacktestCli } from './commands/backtest';
 import { cacheInfo } from './commands/cache-info';
