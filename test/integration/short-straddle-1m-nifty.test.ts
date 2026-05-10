@@ -54,21 +54,12 @@ function generateExpiryDayData(expiryYmd: string, atmStrike: number): ExpiryDayD
 
   // Each weekly expiry gets a UNIQUE option symbol (otherwise ShortStraddle entries
   // across expiries pile into one position and net out incorrectly).
-  // The options-report grouping regex is /(\d{2}[A-Z]{3})/, so we synthesize
-  // codes like 25MAA / 25MAB / 25MAC / 25MAD per expiry — three letters keeps
-  // the regex happy and yields one row per expiry in the report.
-  const expiryCodeMap: Record<string, string> = {
-    '2025-05-08': '25MAA',
-    '2025-05-15': '25MAB',
-    '2025-05-22': '25MAC',
-    '2025-05-29': '25MAD',
-  };
-  const code = expiryCodeMap[expiryYmd];
-  if (!code) throw new Error(`unknown expiry: ${expiryYmd}`);
-
+  // The options-report grouping regex is /(\d{4}-\d{2}-\d{2})/, matching the
+  // hyphenated full-date form emitted by `buildOptionSymbol` — so each weekly
+  // expiry naturally produces a distinct row in the per-expiry report.
   const expiry = istBarTs(expiryYmd, 6 * 60); // expiry "time" 15:15 IST (irrelevant for sim)
   const ceContract: OptionContract = {
-    symbol: `NIFTY${code}${atmStrike}CE`,
+    symbol: `NIFTY-${expiryYmd}-${atmStrike}-CE`,
     underlying: 'NIFTY',
     expiry,
     strike: atmStrike,
@@ -78,7 +69,7 @@ function generateExpiryDayData(expiryYmd: string, atmStrike: number): ExpiryDayD
   };
   const peContract: OptionContract = {
     ...ceContract,
-    symbol: `NIFTY${code}${atmStrike}PE`,
+    symbol: `NIFTY-${expiryYmd}-${atmStrike}-PE`,
     optionType: 'PE',
     instrumentToken: 2000 + parseInt(expiryYmd.replace(/-/g, ''), 10),
   };
@@ -242,6 +233,11 @@ describe('short straddle integration — NIFTY May 2025', () => {
     expect(html).toMatch(/<tfoot>/);
     // No NaN should leak into the table cells.
     expect(html).not.toContain('NaN');
+    // Each of the 4 weekly expiries must produce a distinct row — the old
+    // month-only regex (`\d{2}[A-Z]{3}`) collapsed them into a single row.
+    for (const ymd of EXPIRIES) {
+      expect(html).toContain(ymd);
+    }
   });
 
   it('runs deterministically: two runs produce identical final equity', () => {

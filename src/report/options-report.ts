@@ -19,11 +19,12 @@ interface LegBasket {
 }
 
 function extractExpiryKey(symbol: string): string {
-  // Parses NIFTY-style option symbols like 'NIFTY25MAY22000CE' or 'NIFTY24MAY2200022000CE'
-  // Returns the date-prefix portion (e.g., '25MAY'). For unknown formats returns 'unknown'.
-  // Strategy adopts whatever format the contract synthesis used; for the Task 11/12 fixtures the
-  // symbol is `NIFTY25MAY22000CE` so we capture `\d{2}[A-Z]{3}`.
-  const m = symbol.match(/(\d{2}[A-Z]{3})/);
+  // Parses option tradingsymbols synthesized by `buildOptionSymbol`, e.g.
+  // 'NIFTY-2025-05-22-22000-CE'. Returns the YYYY-MM-DD expiry date — unique
+  // per weekly expiry, so multiple weeklies in the same month no longer
+  // collapse into a single per-expiry row (the old `\d{2}[A-Z]{3}` regex
+  // matched only the month code and conflated all four May weeklies).
+  const m = symbol.match(/(\d{4}-\d{2}-\d{2})/);
   return m?.[1] ?? 'unknown';
 }
 

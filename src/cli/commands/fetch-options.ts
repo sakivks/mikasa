@@ -23,20 +23,29 @@ const SPOT_TOKEN: Record<Underlying, number> = {
   BANKNIFTY: 260105,
 };
 
-/** Lot sizes (Sept 2024 onward). */
-const LOT_SIZE: Record<Underlying, number> = { NIFTY: 75, BANKNIFTY: 35 };
-
-const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+/**
+ * Lot-size fallback used only when the tokenMap entry is the legacy `number`
+ * shape (i.e., bare instrumentToken without lot-size).
+ *
+ * Transitional convenience — the canonical source of truth is the per-expiry
+ * lot size carried in the new tokenMap object shape (`{ token, lotSize }`),
+ * which mirrors what Kite's instrument dump emits per expiry. NIFTY's lot has
+ * historically changed (75 → 50 → 75); never hardcode beyond this safety net.
+ */
+const LOT_SIZE_FALLBACK: Record<Underlying, number> = { NIFTY: 75, BANKNIFTY: 35 };
 
 /**
  * Build the option tradingsymbol used by strategy/report code.
- * Format: <UNDERLYING><YY><MMM><STRIKE><CE|PE>
- * Example: NIFTY25MAY22000CE
+ * Format: <UNDERLYING>-<YYYY>-<MM>-<DD>-<STRIKE>-<CE|PE>
+ * Example: NIFTY-2025-05-22-22000-CE
  *
  * Note: this does NOT match Kite's weekly tradingsymbol convention
- * (which uses week-of-month encoding for weeklies); but the Task 11/12/13
- * test fixtures and report regex (`\d{2}[A-Z]{3}`) all use this monthly form,
- * so we keep it consistent with strategy expectations.
+ * (which uses week-of-year encoding for weeklies). We use a hyphen-separated
+ * full-date form so that:
+ *   1. The per-expiry report regex `(\d{4}-\d{2}-\d{2})` reliably extracts a
+ *      unique key per weekly expiry — multiple May weeklies no longer collapse
+ *      into a single row as they did with the old `25MAY` month-only form.
+ *   2. Strategy/test fixtures can still synthesize symbols deterministically.
  */
 export function buildOptionSymbol(c: {
   underlying: Underlying;
@@ -44,11 +53,23 @@ export function buildOptionSymbol(c: {
   strike: number;
   optionType: 'CE' | 'PE';
 }): string {
-  const yy = String(c.expiry.getUTCFullYear()).slice(-2);
-  const mmm = MONTHS[c.expiry.getUTCMonth()]!;
+  const yyyy = String(c.expiry.getUTCFullYear());
+  const mm = String(c.expiry.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(c.expiry.getUTCDate()).padStart(2, '0');
   // Strikes for index options are integers; use Math.round to be safe.
   const strike = String(Math.round(c.strike));
-  return `${c.underlying}${yy}${mmm}${strike}${c.optionType}`;
+  return `${c.underlying}-${yyyy}-${mm}-${dd}-${strike}-${c.optionType}`;
+}
+
+/**
+ * tokenMap entry shape. The canonical (new) form carries both the Kite
+ * `instrumentToken` and the per-expiry `lotSize` lifted from the instrument
+ * dump. The legacy form was a bare `number` (instrument token only); reads
+ * fall back to {@link LOT_SIZE_FALLBACK} when encountered.
+ */
+export interface TokenMapEntry {
+  token: number;
+  lotSize: number;
 }
 
 export interface FetchOptionsDeps {
@@ -56,7 +77,11 @@ export interface FetchOptionsDeps {
   instruments: InstrumentStore;
   candles: CandleStore;
   logger: Logger;
-  /** Path to a JSON file mapping (underlying|expiryISO|strike|type) -> instrumentToken */
+  /**
+   * Path to a JSON file mapping (underlying|expiryISO|strike|type) -> entry.
+   * Entry may be the new {@link TokenMapEntry} object shape, or a legacy
+   * bare `number` (instrumentToken). New code must emit the object form.
+   */
   tokenMapPath: string;
   /** Directory of pre-downloaded NSE bhavcopy CSVs */
   bhavcopyDir: string;
@@ -79,8 +104,14 @@ export async function fetchOptions(
   const { source, instruments, candles, logger, tokenMapPath, bhavcopyDir } = deps;
   const range = deps.atmRange ?? 10;
 
-  // 1. Hydrate InstrumentStore from bhavcopy CSVs
-  const tokenMap = JSON.parse(fs.readFileSync(tokenMapPath, 'utf8')) as Record<string, number>;
+  // 1. Hydrate InstrumentStore from bhavcopy CSVs.
+  //    tokenMap may be either the new object form ({ token, lotSize }) or the
+  //    legacy bare-number form. Both are accepted; legacy entries fall back to
+  //    LOT_SIZE_FALLBACK for the underlying.
+  const tokenMap = JSON.parse(fs.readFileSync(tokenMapPath, 'utf8')) as Record<
+    string,
+    TokenMapEntry | number
+  >;
   const bhavFiles = fs
     .readdirSync(bhavcopyDir)
     .filter((f) => f.toLowerCase().endsWith('.csv'))
@@ -96,11 +127,14 @@ export async function fetchOptions(
       const key = `${r.underlying}|${r.expiry.toISOString()}|${r.strike}|${r.optionType}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const token = tokenMap[key];
-      if (token === undefined) {
+      const entry = tokenMap[key];
+      if (entry === undefined) {
         logger.warn({ key }, 'no token in tokenMap; skipping contract');
         continue;
       }
+      const token = typeof entry === 'number' ? entry : entry.token;
+      const lotSize =
+        typeof entry === 'number' ? LOT_SIZE_FALLBACK[r.underlying] : entry.lotSize;
       const contract: OptionContract = {
         symbol: buildOptionSymbol({
           underlying: r.underlying,
@@ -112,7 +146,7 @@ export async function fetchOptions(
         expiry: r.expiry,
         strike: r.strike,
         optionType: r.optionType,
-        lotSize: LOT_SIZE[r.underlying],
+        lotSize,
         instrumentToken: token,
       };
       await instruments.addOption(contract);

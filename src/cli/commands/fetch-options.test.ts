@@ -27,11 +27,12 @@ beforeEach(() => {
   writeFileSync(join(bhavcopyDir, 'fo01MAY2025bhav.csv'), sampleCsv);
 
   tokenMapPath = join(dir, 'tokens.json');
-  const tokenMap: Record<string, number> = {
-    'NIFTY|2025-05-22T10:00:00.000Z|22000|CE': 11111,
-    'NIFTY|2025-05-22T10:00:00.000Z|22000|PE': 11112,
-    'NIFTY|2025-05-22T10:00:00.000Z|22050|CE': 11113,
-    'NIFTY|2025-05-22T10:00:00.000Z|22050|PE': 11114,
+  // New tokenMap shape: per-key object carrying both token and lotSize.
+  const tokenMap: Record<string, { token: number; lotSize: number }> = {
+    'NIFTY|2025-05-22T10:00:00.000Z|22000|CE': { token: 11111, lotSize: 75 },
+    'NIFTY|2025-05-22T10:00:00.000Z|22000|PE': { token: 11112, lotSize: 75 },
+    'NIFTY|2025-05-22T10:00:00.000Z|22050|CE': { token: 11113, lotSize: 75 },
+    'NIFTY|2025-05-22T10:00:00.000Z|22050|PE': { token: 11114, lotSize: 75 },
   };
   writeFileSync(tokenMapPath, JSON.stringify(tokenMap));
 });
@@ -51,14 +52,14 @@ const makeLogger = () => ({
 });
 
 describe('buildOptionSymbol', () => {
-  it('synthesizes the strategy-expected NIFTY25MAY22000CE format', () => {
+  it('synthesizes the hyphenated full-date format', () => {
     const sym = buildOptionSymbol({
       underlying: 'NIFTY',
       expiry: new Date('2025-05-22T10:00:00.000Z'),
       strike: 22000,
       optionType: 'CE',
     });
-    expect(sym).toBe('NIFTY25MAY22000CE');
+    expect(sym).toBe('NIFTY-2025-05-22-22000-CE');
   });
 
   it('rounds non-integer strikes', () => {
@@ -68,7 +69,35 @@ describe('buildOptionSymbol', () => {
       strike: 50000.0,
       optionType: 'PE',
     });
-    expect(sym).toBe('BANKNIFTY25MAY50000PE');
+    expect(sym).toBe('BANKNIFTY-2025-05-22-50000-PE');
+  });
+
+  it('encodes each weekly expiry uniquely (no per-month collapse)', () => {
+    const w1 = buildOptionSymbol({
+      underlying: 'NIFTY',
+      expiry: new Date('2025-05-08T10:00:00.000Z'),
+      strike: 22000,
+      optionType: 'CE',
+    });
+    const w2 = buildOptionSymbol({
+      underlying: 'NIFTY',
+      expiry: new Date('2025-05-15T10:00:00.000Z'),
+      strike: 22000,
+      optionType: 'CE',
+    });
+    const w3 = buildOptionSymbol({
+      underlying: 'NIFTY',
+      expiry: new Date('2025-05-22T10:00:00.000Z'),
+      strike: 22000,
+      optionType: 'CE',
+    });
+    const w4 = buildOptionSymbol({
+      underlying: 'NIFTY',
+      expiry: new Date('2025-05-29T10:00:00.000Z'),
+      strike: 22000,
+      optionType: 'CE',
+    });
+    expect(new Set([w1, w2, w3, w4]).size).toBe(4);
   });
 });
 
@@ -167,11 +196,12 @@ describe('fetchOptions', () => {
     expect(added).toHaveLength(4);
     expect(added.every((c) => c.underlying === 'NIFTY')).toBe(true);
     expect(added.map((c) => c.symbol).sort()).toEqual([
-      'NIFTY25MAY22000CE',
-      'NIFTY25MAY22000PE',
-      'NIFTY25MAY22050CE',
-      'NIFTY25MAY22050PE',
+      'NIFTY-2025-05-22-22000-CE',
+      'NIFTY-2025-05-22-22000-PE',
+      'NIFTY-2025-05-22-22050-CE',
+      'NIFTY-2025-05-22-22050-PE',
     ]);
+    // lotSize must come from the tokenMap entry, not from a hardcoded constant.
     expect(added.every((c) => c.lotSize === 75)).toBe(true);
     expect(added.find((c) => c.strike === 22000 && c.optionType === 'CE')!.instrumentToken).toBe(
       11111,
@@ -194,15 +224,127 @@ describe('fetchOptions', () => {
     expect(spotBars).toHaveLength(1);
 
     // Option bars relabeled to synthetic symbols
-    const optBars = upserted.filter((c) => c.symbol.startsWith('NIFTY25MAY'));
+    const optBars = upserted.filter((c) => c.symbol.startsWith('NIFTY-2025-05-22-'));
     expect(optBars).toHaveLength(4);
     expect(new Set(optBars.map((b) => b.symbol))).toEqual(
-      new Set(['NIFTY25MAY22000CE', 'NIFTY25MAY22000PE', 'NIFTY25MAY22050CE', 'NIFTY25MAY22050PE']),
+      new Set([
+        'NIFTY-2025-05-22-22000-CE',
+        'NIFTY-2025-05-22-22000-PE',
+        'NIFTY-2025-05-22-22050-CE',
+        'NIFTY-2025-05-22-22050-PE',
+      ]),
     );
 
     // Coverage recorded for spot + each option
     expect(coverages.find((c) => c.symbol === 'NIFTY 50')).toBeDefined();
-    expect(coverages.filter((c) => c.symbol.startsWith('NIFTY25MAY'))).toHaveLength(4);
+    expect(coverages.filter((c) => c.symbol.startsWith('NIFTY-2025-05-22-'))).toHaveLength(4);
+  });
+
+  it('reads lotSize from the tokenMap entry per expiry (not a hardcoded constant)', async () => {
+    // Custom tokenMap with a non-standard lotSize (50, NIFTY's pre-Sept-2024 size).
+    // Hydration must surface 50, proving lot size is not hardcoded.
+    const customLot = 50;
+    writeFileSync(
+      tokenMapPath,
+      JSON.stringify({
+        'NIFTY|2025-05-22T10:00:00.000Z|22000|CE': { token: 11111, lotSize: customLot },
+        'NIFTY|2025-05-22T10:00:00.000Z|22000|PE': { token: 11112, lotSize: customLot },
+        'NIFTY|2025-05-22T10:00:00.000Z|22050|CE': { token: 11113, lotSize: customLot },
+        'NIFTY|2025-05-22T10:00:00.000Z|22050|PE': { token: 11114, lotSize: customLot },
+      }),
+    );
+
+    const added: OptionContract[] = [];
+    const instruments = {
+      addOption: vi.fn(async (c: OptionContract) => {
+        added.push(c);
+      }),
+      expiries: vi.fn(async () => []),
+      findOption: vi.fn(async () => null),
+    };
+    const candles = {
+      upsert: vi.fn(),
+      recordCoverage: vi.fn(),
+    };
+    const source = {
+      fetchOptionCandles: vi.fn(async (_t: number, _f: Date, _to: Date, _i: Interval) => []),
+    };
+
+    await fetchOptions(
+      'NIFTY',
+      new Date('2025-05-01T00:00:00Z'),
+      new Date('2025-05-31T00:00:00Z'),
+      {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        source: source as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        instruments: instruments as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        candles: candles as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        logger: makeLogger() as any,
+        tokenMapPath,
+        bhavcopyDir,
+      },
+    );
+
+    expect(added).toHaveLength(4);
+    expect(added.every((c) => c.lotSize === customLot)).toBe(true);
+  });
+
+  it('falls back to default lotSize when tokenMap entry is the legacy bare-number form', async () => {
+    // Legacy shape: bare number (instrumentToken). Lot size comes from the
+    // LOT_SIZE_FALLBACK constant — kept as a transitional safety net.
+    writeFileSync(
+      tokenMapPath,
+      JSON.stringify({
+        'NIFTY|2025-05-22T10:00:00.000Z|22000|CE': 11111,
+        'NIFTY|2025-05-22T10:00:00.000Z|22000|PE': 11112,
+        'NIFTY|2025-05-22T10:00:00.000Z|22050|CE': 11113,
+        'NIFTY|2025-05-22T10:00:00.000Z|22050|PE': 11114,
+      }),
+    );
+
+    const added: OptionContract[] = [];
+    const instruments = {
+      addOption: vi.fn(async (c: OptionContract) => {
+        added.push(c);
+      }),
+      expiries: vi.fn(async () => []),
+      findOption: vi.fn(async () => null),
+    };
+    const candles = {
+      upsert: vi.fn(),
+      recordCoverage: vi.fn(),
+    };
+    const source = {
+      fetchOptionCandles: vi.fn(async (_t: number, _f: Date, _to: Date, _i: Interval) => []),
+    };
+
+    await fetchOptions(
+      'NIFTY',
+      new Date('2025-05-01T00:00:00Z'),
+      new Date('2025-05-31T00:00:00Z'),
+      {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        source: source as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        instruments: instruments as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        candles: candles as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        logger: makeLogger() as any,
+        tokenMapPath,
+        bhavcopyDir,
+      },
+    );
+
+    expect(added).toHaveLength(4);
+    // Fallback for NIFTY = 75
+    expect(added.every((c) => c.lotSize === 75)).toBe(true);
+    expect(added.find((c) => c.strike === 22000 && c.optionType === 'CE')!.instrumentToken).toBe(
+      11111,
+    );
   });
 
   it('skips contracts with no token in the tokenMap and warns', async () => {
