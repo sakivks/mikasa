@@ -56,6 +56,8 @@ export class BacktestEngine {
 
     // Pending orders carry across bars; queued() reads-write; engine processes against next bar.
     let pending: ReturnType<OrderRouter['drain']> = [];
+    // Last known close per symbol — used to mark all open positions (not just current bar's symbol).
+    const lastCloses = new Map<string, number>();
 
     for (let i = 0; i < candles.length; i++) {
       const bar = candles[i]!;
@@ -83,8 +85,12 @@ export class BacktestEngine {
       // Update indicators with this bar's close
       indicators.feedClose(bar.symbol, bar.close);
 
-      // Mark to market with this bar's close
-      portfolio.markToMarket(new Map([[bar.symbol, bar.close]]), bar.ts);
+      // Track last-known close for ALL symbols so multi-symbol positions mark correctly.
+      lastCloses.set(bar.symbol, bar.close);
+
+      // Mark to market: pass the full last-close map (not just current bar's symbol),
+      // otherwise other open positions would mark to 0 and corrupt the equity curve / MDD.
+      portfolio.markToMarket(lastCloses, bar.ts);
 
       const isWarmup = i < warmupBars;
       if (!isWarmup) {
