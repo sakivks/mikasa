@@ -127,4 +127,147 @@ describe('buildTrades', () => {
     expect(trades[0]!.qty).toBe(5);
     expect(trades[0]!.pnl).toBeCloseTo(5 * 10 - 2);
   });
+
+  it('short → buy-to-close, single lot, profit', () => {
+    const fills: Fill[] = [
+      {
+        orderId: '1',
+        symbol: 'NIFTY25000CE',
+        side: OrderSide.SELL,
+        qty: 75,
+        price: 100,
+        ts: new Date('2025-01-02T03:50:00Z'),
+        fees: { brokerage: 2, stt: 0, exchange: 0, gst: 0, sebi: 0, stampDuty: 0, total: 2 },
+      },
+      {
+        orderId: '2',
+        symbol: 'NIFTY25000CE',
+        side: OrderSide.BUY,
+        qty: 75,
+        price: 80,
+        ts: new Date('2025-01-02T04:00:00Z'),
+        fees: { brokerage: 3, stt: 0, exchange: 0, gst: 0, sebi: 0, stampDuty: 0, total: 3 },
+      },
+    ];
+    const trades = buildTrades(fills);
+    expect(trades.length).toBe(1);
+    const t = trades[0]!;
+    expect(t.side).toBe(OrderSide.SELL);
+    expect(t.entryPrice).toBe(100);
+    expect(t.exitPrice).toBe(80);
+    expect(t.qty).toBe(75);
+    // pnl = (entry - exit) × qty - fees = (100 - 80) × 75 - (2 + 3) = 1500 - 5 = 1495
+    expect(t.pnl).toBeCloseTo(1495);
+    expect(t.fees).toBeCloseTo(5);
+  });
+
+  it('short → buy-to-close, partial close', () => {
+    const fills: Fill[] = [
+      {
+        orderId: '1',
+        symbol: 'NIFTY25000PE',
+        side: OrderSide.SELL,
+        qty: 100,
+        price: 100,
+        ts: new Date('2025-01-02T03:50:00Z'),
+        fees: { brokerage: 5, stt: 0, exchange: 0, gst: 0, sebi: 0, stampDuty: 0, total: 5 },
+      },
+      {
+        orderId: '2',
+        symbol: 'NIFTY25000PE',
+        side: OrderSide.BUY,
+        qty: 60,
+        price: 80,
+        ts: new Date('2025-01-02T04:00:00Z'),
+        fees: { brokerage: 3, stt: 0, exchange: 0, gst: 0, sebi: 0, stampDuty: 0, total: 3 },
+      },
+    ];
+    const trades = buildTrades(fills);
+    expect(trades.length).toBe(1);
+    const t = trades[0]!;
+    expect(t.side).toBe(OrderSide.SELL);
+    expect(t.entryPrice).toBe(100);
+    expect(t.exitPrice).toBe(80);
+    expect(t.qty).toBe(60);
+    // proportional entry fees = 5 × 60/100 = 3; exit fees = 3 (full)
+    // pnl = (100 - 80) × 60 - 3 - 3 = 1200 - 6 = 1194
+    expect(t.pnl).toBeCloseTo(1194);
+    expect(t.fees).toBeCloseTo(6);
+
+    // 40 lots remain open; closing them with another buy verifies the residual lot.
+    const moreFills: Fill[] = [
+      ...fills,
+      {
+        orderId: '3',
+        symbol: 'NIFTY25000PE',
+        side: OrderSide.BUY,
+        qty: 40,
+        price: 90,
+        ts: new Date('2025-01-02T04:10:00Z'),
+        fees: { brokerage: 2, stt: 0, exchange: 0, gst: 0, sebi: 0, stampDuty: 0, total: 2 },
+      },
+    ];
+    const trades2 = buildTrades(moreFills);
+    expect(trades2.length).toBe(2);
+    const t2 = trades2[1]!;
+    expect(t2.side).toBe(OrderSide.SELL);
+    expect(t2.qty).toBe(40);
+    expect(t2.entryPrice).toBe(100);
+    expect(t2.exitPrice).toBe(90);
+  });
+
+  it('short → reversal (buy more than open) emits Trade and opens new long lot', () => {
+    const fills: Fill[] = [
+      {
+        orderId: '1',
+        symbol: 'NIFTY',
+        side: OrderSide.SELL,
+        qty: 50,
+        price: 100,
+        ts: new Date('2025-01-02T03:50:00Z'),
+        fees: { brokerage: 2, stt: 0, exchange: 0, gst: 0, sebi: 0, stampDuty: 0, total: 2 },
+      },
+      {
+        orderId: '2',
+        symbol: 'NIFTY',
+        side: OrderSide.BUY,
+        qty: 80,
+        price: 90,
+        ts: new Date('2025-01-02T04:00:00Z'),
+        fees: { brokerage: 4, stt: 0, exchange: 0, gst: 0, sebi: 0, stampDuty: 0, total: 4 },
+      },
+    ];
+    const trades = buildTrades(fills);
+    // Should emit exactly one Trade for the closed 50 short lots.
+    expect(trades.length).toBe(1);
+    const t = trades[0]!;
+    expect(t.side).toBe(OrderSide.SELL);
+    expect(t.qty).toBe(50);
+    expect(t.entryPrice).toBe(100);
+    expect(t.exitPrice).toBe(90);
+    // proportional exit fees = 4 × 50/80 = 2.5
+    // pnl = (100 - 90) × 50 - 2 - 2.5 = 500 - 4.5 = 495.5
+    expect(t.pnl).toBeCloseTo(495.5);
+
+    // Verify residual 30 long lots open at 90 by closing them with a sell.
+    const closeFills: Fill[] = [
+      ...fills,
+      {
+        orderId: '3',
+        symbol: 'NIFTY',
+        side: OrderSide.SELL,
+        qty: 30,
+        price: 95,
+        ts: new Date('2025-01-02T04:10:00Z'),
+        fees: { brokerage: 1, stt: 0, exchange: 0, gst: 0, sebi: 0, stampDuty: 0, total: 1 },
+      },
+    ];
+    const trades2 = buildTrades(closeFills);
+    expect(trades2.length).toBe(2);
+    const t2 = trades2[1]!;
+    expect(t2.side).toBe(OrderSide.BUY);
+    expect(t2.qty).toBe(30);
+    expect(t2.entryPrice).toBe(90);
+    expect(t2.exitPrice).toBe(95);
+  });
 });

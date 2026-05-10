@@ -23,6 +23,9 @@ function makeCtx(positions: Map<string, Position> = new Map()): {
     indicator: reg,
     params: {},
     logger: { info: () => {}, debug: () => {}, warn: () => {}, error: () => {} } as never,
+    optionPosition: () => null,
+    submitMultiLeg: () => 'mlg-1',
+    lastClose: () => undefined,
   };
   return { ctx, submitted, reg, positions };
 }

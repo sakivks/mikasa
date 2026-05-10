@@ -1,6 +1,7 @@
 import type { Logger } from '../util/logger';
 import type { Candle, Fill, OrderId, OrderIntent, Position } from '../types';
 import type { IndicatorRegistry } from '../indicators/registry';
+import type { OptionPosition, MultiLegOrder } from '../types/options';
 
 export interface StrategyContext {
   cash: number;
@@ -10,6 +11,9 @@ export interface StrategyContext {
   indicator: IndicatorRegistry;
   params: Record<string, unknown>;
   logger: Logger;
+  optionPosition(symbol: string): OptionPosition | null;
+  submitMultiLeg(order: Omit<MultiLegOrder, 'id' | 'ts'>): string;
+  lastClose(symbol: string): number | undefined;
 }
 
 export abstract class Strategy {

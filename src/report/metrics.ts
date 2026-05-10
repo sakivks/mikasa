@@ -123,46 +123,80 @@ function annualizedSortino(returns: number[], daysPerYear: number): number {
   return (mean / dd) * Math.sqrt(daysPerYear);
 }
 
-/** Pair entry and exit fills (long-only FIFO). For milestone 1 we only support one open position per symbol. */
+/**
+ * Pair entry and exit fills into Trades using FIFO matching, supporting both
+ * long-first (buy-to-open, sell-to-close) and short-first (sell-to-open,
+ * buy-to-close) sequences. Per-symbol queue holds open lots tagged with side;
+ * an opposite-side fill consumes lots and emits Trades, with any remainder
+ * opening new lots in the fill's direction (reversals).
+ */
 export function buildTrades(fills: Fill[]): Trade[] {
-  const open = new Map<string, Array<{ qty: number; price: number; ts: Date; fees: number }>>();
+  interface OpenLot {
+    side: OrderSide; // direction of the open position (BUY = long, SELL = short)
+    qty: number;
+    price: number;
+    ts: Date;
+    fees: number;
+  }
+  const open = new Map<string, OpenLot[]>();
   const trades: Trade[] = [];
   for (const f of fills) {
-    if (f.side === OrderSide.BUY) {
-      let q = open.get(f.symbol);
-      if (!q) {
-        q = [];
-        open.set(f.symbol, q);
-      }
-      q.push({ qty: f.qty, price: f.price, ts: f.ts, fees: f.fees.total });
-    } else {
-      // SELL — match against FIFO open lots
-      let remaining = f.qty;
-      let exitFeesRemaining = f.fees.total;
-      const q = open.get(f.symbol) ?? [];
-      while (remaining > 0 && q.length > 0) {
-        const lot = q[0]!;
-        const matchQty = Math.min(remaining, lot.qty);
-        const proportionalEntryFees = (lot.fees * matchQty) / lot.qty;
-        const proportionalExitFees = (exitFeesRemaining * matchQty) / f.qty;
-        const pnl = (f.price - lot.price) * matchQty - proportionalEntryFees - proportionalExitFees;
-        trades.push({
-          symbol: f.symbol,
-          qty: matchQty,
-          entryPrice: lot.price,
-          exitPrice: f.price,
-          entryTs: lot.ts,
-          exitTs: f.ts,
-          side: OrderSide.BUY,
-          pnl,
-          fees: proportionalEntryFees + proportionalExitFees,
-        });
-        lot.qty -= matchQty;
-        lot.fees -= proportionalEntryFees;
-        remaining -= matchQty;
-        exitFeesRemaining -= proportionalExitFees;
-        if (lot.qty === 0) q.shift();
-      }
+    let q = open.get(f.symbol);
+    if (!q) {
+      q = [];
+      open.set(f.symbol, q);
+    }
+
+    // If queue is empty or fill matches queue's side, push as a new open lot.
+    if (q.length === 0 || q[0]!.side === f.side) {
+      q.push({ side: f.side, qty: f.qty, price: f.price, ts: f.ts, fees: f.fees.total });
+      continue;
+    }
+
+    // Opposite-side fill: consume from front of queue, emitting a Trade per
+    // closed lot. If the fill exceeds the open quantity, the remainder opens
+    // a new lot in the fill's direction (reversal).
+    let remaining = f.qty;
+    let exitFeesRemaining = f.fees.total;
+    while (remaining > 0 && q.length > 0 && q[0]!.side !== f.side) {
+      const lot = q[0]!;
+      const matchQty = Math.min(remaining, lot.qty);
+      const proportionalEntryFees = (lot.fees * matchQty) / lot.qty;
+      const proportionalExitFees = (exitFeesRemaining * matchQty) / f.qty;
+      // Long lot closed by SELL: pnl = (exit - entry) × qty
+      // Short lot closed by BUY: pnl = (entry - exit) × qty
+      const grossPnl =
+        lot.side === OrderSide.BUY
+          ? (f.price - lot.price) * matchQty
+          : (lot.price - f.price) * matchQty;
+      const pnl = grossPnl - proportionalEntryFees - proportionalExitFees;
+      trades.push({
+        symbol: f.symbol,
+        qty: matchQty,
+        entryPrice: lot.price,
+        exitPrice: f.price,
+        entryTs: lot.ts,
+        exitTs: f.ts,
+        side: lot.side, // entry leg's side
+        pnl,
+        fees: proportionalEntryFees + proportionalExitFees,
+      });
+      lot.qty -= matchQty;
+      lot.fees -= proportionalEntryFees;
+      remaining -= matchQty;
+      exitFeesRemaining -= proportionalExitFees;
+      if (lot.qty === 0) q.shift();
+    }
+
+    // Reversal: any unmatched remainder opens a new lot in the fill's direction.
+    if (remaining > 0) {
+      q.push({
+        side: f.side,
+        qty: remaining,
+        price: f.price,
+        ts: f.ts,
+        fees: exitFeesRemaining,
+      });
     }
   }
   return trades;

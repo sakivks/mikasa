@@ -1,6 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { OrderRouter } from './order-router';
 import { OrderSide, OrderType, type Position } from '../types';
+import type { OptionContract } from '../types/options';
+
+const optContract = (over: Partial<OptionContract> = {}): OptionContract => ({
+  symbol: 'NIFTY25MAY22000CE',
+  underlying: 'NIFTY',
+  expiry: new Date('2025-05-29T10:00:00Z'),
+  strike: 22000,
+  optionType: 'CE',
+  lotSize: 75,
+  instrumentToken: 220001,
+  ...over,
+});
 
 const pos = (qty: number): Position => ({ symbol: 'R', qty, avgPrice: 100 });
 
@@ -56,5 +68,35 @@ describe('OrderRouter', () => {
     r.maybeSquareoff(ts, [pos(10)]);
     r.maybeSquareoff(ts, [pos(10)]);
     expect(r.queued().length).toBe(1);
+  });
+
+  it('submitMultiLeg returns ml-prefixed id and queues the order; drainMultiLeg empties the queue', () => {
+    const r = new OrderRouter({ squareoffTime: '15:15' });
+    const ce = optContract({ strike: 22000, optionType: 'CE', symbol: 'NIFTY25MAY22000CE' });
+    const pe = optContract({ strike: 22000, optionType: 'PE', symbol: 'NIFTY25MAY22000PE' });
+    const id = r.submitMultiLeg({
+      legs: [
+        { contract: ce, side: OrderSide.SELL, qty: 1 },
+        { contract: pe, side: OrderSide.SELL, qty: 1 },
+      ],
+      reason: 'entry',
+    });
+    expect(id).toMatch(/^ml-\d+$/);
+    const drained = r.drainMultiLeg();
+    expect(drained.length).toBe(1);
+    expect(drained[0]!.id).toBe(id);
+    expect(drained[0]!.legs.length).toBe(2);
+    expect(r.drainMultiLeg().length).toBe(0);
+  });
+
+  it('multi-leg ids are independent of single-leg ids', () => {
+    const r = new OrderRouter({ squareoffTime: '15:15' });
+    r.submit({ symbol: 'R', side: OrderSide.BUY, qty: 1, type: OrderType.MARKET });
+    const mlId = r.submitMultiLeg({
+      legs: [{ contract: optContract(), side: OrderSide.BUY, qty: 1 }],
+      reason: 'entry',
+    });
+    expect(mlId).toMatch(/^ml-/);
+    expect(r.queued()[0]!.id).toMatch(/^ord-/);
   });
 });

@@ -64,6 +64,7 @@ export interface Fill {
   price: number;
   ts: Date;
   fees: Fees;
+  multiLegOrderId?: string;       // present when this fill is part of a multi-leg basket
 }
 
 export interface Position {
@@ -91,3 +92,5 @@ export interface EquitySnapshot {
   realized: number;
   equity: number;         // cash + unrealized + realized
 }
+
+export type { OptionContract, Leg, MultiLegOrder, OptionPosition, OptionType, Underlying } from './options';

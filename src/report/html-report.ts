@@ -1,5 +1,7 @@
-import type { EquitySnapshot, Trade } from '../types';
+import type { EquitySnapshot, Fill, Trade } from '../types';
+import type { MarginStats } from '../engine/backtest-engine';
 import type { Metrics } from './metrics';
+import { renderOptionsSection } from './options-report';
 
 export interface ReportInput {
   runId: string;
@@ -11,6 +13,8 @@ export interface ReportInput {
   metrics: Metrics;
   equityCurve: EquitySnapshot[];
   trades: Trade[];
+  fills?: Fill[];
+  marginStats?: MarginStats;
 }
 
 const fmt = (n: number, opts: Intl.NumberFormatOptions = {}) =>
@@ -97,6 +101,8 @@ export function renderHtml(r: ReportInput): string {
     ${tradesRows || '<tr><td colspan="9">No trades</td></tr>'}
   </tbody>
 </table>
+
+${renderOptionsSection(r.fills ?? [], r.marginStats)}
 
 <script>
 const equity = ${JSON.stringify(equityData)};

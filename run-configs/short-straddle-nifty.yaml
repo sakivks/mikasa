@@ -1,0 +1,21 @@
+strategy: ShortStraddle
+params:
+  entryTime: "09:20"
+  exitTime: "15:15"
+  slPctOnPremium: 30
+  targetPctOnPremium: 60
+  lots: 1
+  underlying: NIFTY
+  spotSymbol: "NIFTY 50"
+  # atmContracts populated at run-time by the loader before engine starts
+symbols:
+  - "NIFTY 50"
+from: 2025-05-01
+to: 2026-05-01
+interval: 1minute
+capital: 500000
+slippage_bps: 5
+brokerage: zerodha-intraday
+warmup_bars: 0
+squareoff_time: "15:15"
+seed: 42

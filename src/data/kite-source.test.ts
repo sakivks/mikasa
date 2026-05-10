@@ -88,4 +88,92 @@ describe('KiteSource', () => {
       }),
     ).rejects.toThrow(/unknown symbol on BSE: NOPE/);
   });
+
+  describe('fetchOptionCandles', () => {
+    it('forwards instrument token to kite client and labels candles with TOKEN-<token>', async () => {
+      const calls: Array<{
+        symbol: string;
+        instrumentToken: number;
+        interval: string;
+        from: Date;
+        to: Date;
+      }> = [];
+      const optionToken = 12345678;
+      const optionCandles: Candle[] = [
+        {
+          symbol: `TOKEN-${optionToken}`,
+          ts: new Date('2025-01-02T03:45:00Z'),
+          interval: '1minute',
+          open: 50.5,
+          high: 52.0,
+          low: 49.75,
+          close: 51.25,
+          volume: 200,
+        },
+        {
+          symbol: `TOKEN-${optionToken}`,
+          ts: new Date('2025-01-02T03:46:00Z'),
+          interval: '1minute',
+          open: 51.25,
+          high: 51.5,
+          low: 50.0,
+          close: 50.5,
+          volume: 150,
+        },
+      ];
+      const fakeKite = {
+        async getHistorical(args: {
+          symbol: string;
+          instrumentToken: number;
+          interval: string;
+          from: Date;
+          to: Date;
+        }): Promise<Candle[]> {
+          calls.push(args);
+          // Echo the symbol the caller asked for, mirroring KiteClient's own
+          // labeling behavior (it stamps `args.symbol` onto each candle).
+          return optionCandles.map((c) => ({ ...c, symbol: args.symbol, interval: args.interval as Candle['interval'] }));
+        },
+      } as unknown as KiteClient;
+      const fakeInstruments = {
+        async resolve() {
+          throw new Error('instrument store should not be consulted for token-based fetch');
+        },
+      } as unknown as InstrumentStore;
+
+      const source = new KiteSource({ kite: fakeKite, instruments: fakeInstruments });
+      const from = new Date('2025-01-02T03:00:00Z');
+      const to = new Date('2025-01-02T05:00:00Z');
+      const out = await source.fetchOptionCandles(optionToken, from, to, '1minute');
+
+      expect(calls.length).toBe(1);
+      expect(calls[0]).toMatchObject({
+        symbol: `TOKEN-${optionToken}`,
+        instrumentToken: optionToken,
+        interval: '1minute',
+      });
+      expect(calls[0]!.from.toISOString()).toBe('2025-01-02T03:00:00.000Z');
+      expect(calls[0]!.to.toISOString()).toBe('2025-01-02T05:00:00.000Z');
+
+      expect(out.length).toBe(2);
+      for (const c of out) {
+        expect(c.symbol).toBe(`TOKEN-${optionToken}`);
+        expect(c.interval).toBe('1minute');
+      }
+      expect(out[0]).toMatchObject({
+        open: 50.5,
+        high: 52.0,
+        low: 49.75,
+        close: 51.25,
+        volume: 200,
+      });
+      expect(out[1]).toMatchObject({
+        open: 51.25,
+        high: 51.5,
+        low: 50.0,
+        close: 50.5,
+        volume: 150,
+      });
+    });
+  });
 });
