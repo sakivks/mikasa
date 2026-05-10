@@ -13,9 +13,11 @@ export interface ProcessResult {
   fill: Fill | null;
 }
 
+export type MultiLegRejectionReason = 'no-liquidity';
+
 export interface MultiLegResult {
   fills: Fill[];
-  rejection?: { reason: string };
+  rejection?: { reason: MultiLegRejectionReason };
 }
 
 // 1 tick = ₹0.05 on NSE F&O.
@@ -79,6 +81,17 @@ export class BrokerSim {
   }
 
   /**
+   * Slippage for option premiums (absolute ₹ amount, not %).
+   * - slippageBps === 0 → 0 slippage (preserves zero-friction tests).
+   * - slippageBps  >  0 → max(1 tick, price × bps/10_000): floors tiny derived
+   *   values at one NSE F&O tick (₹0.05) so the cost is never sub-tick.
+   */
+  private optionSlippage(price: number): number {
+    if (this.opts.slippageBps === 0) return 0;
+    return Math.max(OPTION_TICK, price * (this.opts.slippageBps / 10_000));
+  }
+
+  /**
    * Process a multi-leg options order atomically against next bars (one per leg symbol).
    * Either every leg fills at its next bar's open ± 1 tick, or none do (no partial fills).
    * Charges are computed per leg via `calcOptionLegCharges` (Zerodha schedule).
@@ -92,9 +105,11 @@ export class BrokerSim {
     }
 
     const fills: Fill[] = [];
-    for (const leg of order.legs) {
+    for (let legIndex = 0; legIndex < order.legs.length; legIndex++) {
+      const leg = order.legs[legIndex]!;
       const bar = nextBars.get(leg.contract.symbol)!;
-      const slippage = leg.side === OrderSide.BUY ? +OPTION_TICK : -OPTION_TICK;
+      const tick = this.optionSlippage(bar.open);
+      const slippage = leg.side === OrderSide.BUY ? +tick : -tick;
       const price = bar.open + slippage;
       const fees = calcOptionLegCharges({
         contract: leg.contract,
@@ -103,7 +118,7 @@ export class BrokerSim {
         price,
       });
       fills.push({
-        orderId: order.id,
+        orderId: `${order.id}-${legIndex}`,
         multiLegOrderId: order.id,
         symbol: leg.contract.symbol,
         side: leg.side,
