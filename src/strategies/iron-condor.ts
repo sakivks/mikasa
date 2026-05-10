@@ -1,6 +1,7 @@
 import { Strategy, type StrategyContext } from './strategy';
 import { OrderSide, type Candle } from '../types';
 import type { OptionContract } from '../types/options';
+import { istHHMM, istWeekday, istWeekKey } from '../util/time';
 
 export interface IronCondorParams {
   entryDay: 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday';
@@ -28,7 +29,6 @@ interface CondorState {
   creditReceived?: number;       // rupees, lot-adjusted (i.e., × lotSize × lots)
 }
 
-const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const DAY_INDEX: Record<string, number> = {
   sunday: 0,
   monday: 1,
@@ -40,19 +40,10 @@ const DAY_INDEX: Record<string, number> = {
 };
 
 function istParts(ts: Date): { day: number; hhmm: string; weekKey: string } {
-  const ist = new Date(ts.getTime() + IST_OFFSET_MS);
-  const day = ist.getUTCDay();
-  const hh = ist.getUTCHours().toString().padStart(2, '0');
-  const mm = ist.getUTCMinutes().toString().padStart(2, '0');
-  const hhmm = `${hh}:${mm}`;
-  const year = ist.getUTCFullYear();
-  const startOfYear = Date.UTC(year, 0, 1);
-  const dayOfYear = Math.floor((ist.getTime() - startOfYear) / 86400000);
-  const startWeekday = new Date(startOfYear).getUTCDay();
-  const week = Math.ceil((dayOfYear + startWeekday + 1) / 7);
-  const weekKey = `${year}-W${week.toString().padStart(2, '0')}`;
-  return { day, hhmm, weekKey };
+  return { day: istWeekday(ts), hhmm: istHHMM(ts), weekKey: istWeekKey(ts) };
 }
+
+export { DAY_INDEX };
 
 export class IronCondor extends Strategy {
   private p!: IronCondorParams;

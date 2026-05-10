@@ -1,6 +1,7 @@
 import { Strategy, type StrategyContext } from './strategy';
 import { OrderSide, type Candle } from '../types';
 import type { OptionContract } from '../types/options';
+import { istDateKey, istHHMM } from '../util/time';
 
 export interface ShortStraddleParams {
   entryTime: string;          // 'HH:MM' IST
@@ -18,20 +19,6 @@ interface State {
   active: boolean;
   expiryKey?: string;
   entryPremium?: number;
-}
-
-const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-
-function istHHMM(ts: Date): string {
-  const ist = new Date(ts.getTime() + IST_OFFSET_MS);
-  const hh = ist.getUTCHours().toString().padStart(2, '0');
-  const mm = ist.getUTCMinutes().toString().padStart(2, '0');
-  return `${hh}:${mm}`;
-}
-
-function istDateKey(ts: Date): string {
-  const ist = new Date(ts.getTime() + IST_OFFSET_MS);
-  return ist.toISOString().slice(0, 10);
 }
 
 export class ShortStraddle extends Strategy {

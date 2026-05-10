@@ -22,6 +22,11 @@ import { createLogger, makeRunId } from '../../util/logger';
 import { KiteConnect } from 'kiteconnect';
 import { parseEnv } from '../../config/env';
 import type { Candle } from '../../types';
+import {
+  buildShortStraddleAtmContracts,
+  buildIronCondorWeeklyContracts,
+} from '../loaders/options-config-loader';
+import type { Underlying } from '../../types/options';
 
 export interface BacktestCliArgs {
   configPath: string;
@@ -99,6 +104,44 @@ export async function runBacktestCli(
     const router = new OrderRouter({ squareoffTime: cfg.squareoff_time });
     const indicators = new IndicatorRegistry();
 
+    // Options strategies need their atmContracts/weeklyContracts populated
+    // before the engine starts — the YAML can't statically encode contracts
+    // that depend on the spot price at entry time. Other strategies pass
+    // through unchanged.
+    let augmentedParams: Record<string, unknown> = { ...cfg.params, symbols: cfg.symbols };
+    if (cfg.strategy === 'ShortStraddle') {
+      const atmContracts = await buildShortStraddleAtmContracts({
+        underlying: cfg.params.underlying as Underlying,
+        spotSymbol: cfg.params.spotSymbol as string,
+        entryTime: cfg.params.entryTime as string,
+        from: new Date(`${cfg.from}T00:00:00Z`),
+        to,
+        step: (cfg.params.underlying as Underlying) === 'NIFTY' ? 50 : 100,
+        instruments: instrumentStore,
+        candles: candleStore,
+        logger,
+        interval: cfg.interval,
+      });
+      augmentedParams = { ...augmentedParams, atmContracts };
+    } else if (cfg.strategy === 'IronCondor') {
+      const weeklyContracts = await buildIronCondorWeeklyContracts({
+        underlying: cfg.params.underlying as Underlying,
+        spotSymbol: cfg.params.spotSymbol as string,
+        entryDay: cfg.params.entryDay as 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday',
+        entryTime: cfg.params.entryTime as string,
+        shortStrikeOffset: cfg.params.shortStrikeOffset as number,
+        wingWidth: cfg.params.wingWidth as number,
+        from: new Date(`${cfg.from}T00:00:00Z`),
+        to,
+        step: (cfg.params.underlying as Underlying) === 'NIFTY' ? 50 : 100,
+        instruments: instrumentStore,
+        candles: candleStore,
+        logger,
+        interval: cfg.interval,
+      });
+      augmentedParams = { ...augmentedParams, weeklyContracts };
+    }
+
     const result = new BacktestEngine({
       candles: allBars,
       strategy,
@@ -108,7 +151,7 @@ export async function runBacktestCli(
       indicators,
       logger,
       warmupBars: cfg.warmup_bars,
-      params: { ...cfg.params, symbols: cfg.symbols },
+      params: augmentedParams,
     }).run();
 
     const trades = buildTrades(result.fills);
