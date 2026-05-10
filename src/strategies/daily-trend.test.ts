@@ -28,6 +28,10 @@ function makeCtx(
     // Use small periods to keep test data short; fraction is the new knob.
     params: { fast: 2, slow: 4, fraction: 0.5 },
     logger: { info: () => {}, debug: () => {}, warn: () => {}, error: () => {} } as never,
+    optionPosition: () => null,
+    submitMultiLeg: () => 'mlg-1',
+    lastClose: () => undefined,
+    subscribeOptions: () => {},
   };
   return { ctx, submitted, reg, positions };
 }

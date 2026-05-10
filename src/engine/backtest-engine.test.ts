@@ -164,3 +164,58 @@ describe('BacktestEngine', () => {
     expect(result.equityCurve.length).toBe(3);
   });
 });
+
+describe('StrategyContext extensions', () => {
+  it('lastClose returns the most recent close for a seen symbol, undefined for unseen', () => {
+    const mkA = (ts: string, close: number): Candle => ({
+      symbol: 'A', ts: new Date(ts), interval: 'day', open: close, high: close, low: close, close, volume: 1,
+    });
+    const candles: Candle[] = [
+      mkA('2025-01-02T00:00:00Z', 100),
+      mkA('2025-01-03T00:00:00Z', 105),
+      mkA('2025-01-04T00:00:00Z', 110),
+    ];
+    let captured: StrategyContext | null = null;
+    class Capture extends Strategy {
+      init(ctx: StrategyContext): void {
+        captured = ctx;
+      }
+      onBar(): void {}
+    }
+    const portfolio = new Portfolio(100_000);
+    const broker = new BrokerSim({ slippageBps: 0, brokerage: zeroBrokerage });
+    const router = new OrderRouter({ squareoffTime: null });
+    const registry = new IndicatorRegistry();
+    const logger = createLogger({ runId: 'test', level: 'error' });
+    const engine = new BacktestEngine({
+      candles,
+      strategy: new Capture(),
+      portfolio,
+      broker,
+      router,
+      indicators: registry,
+      logger,
+      warmupBars: 0,
+      params: {},
+    });
+    engine.run();
+    expect(captured).not.toBeNull();
+    expect(captured!.lastClose('A')).toBe(110);
+    expect(captured!.lastClose('NEVER')).toBeUndefined();
+  });
+
+  it('subscribeOptions accepts a subscription without throwing', () => {
+    class Subscriber extends Strategy {
+      init(ctx: StrategyContext): void {
+        ctx.subscribeOptions({ underlying: 'NIFTY', contracts: [] });
+      }
+      onBar(): void {}
+    }
+    const candles = [
+      cb('2025-01-02T03:45:00Z', 100),
+      cb('2025-01-02T03:50:00Z', 101),
+    ];
+    const engine = makeEngine(new Subscriber(), candles);
+    expect(() => engine.run()).not.toThrow();
+  });
+});

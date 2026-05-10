@@ -27,6 +27,11 @@ export class Portfolio {
     return this._positions.get(symbol) ?? null;
   }
 
+  // Stub: real implementation lands in Task 9 (options portfolio extension).
+  optionPosition(_symbol: string): import('../types/options').OptionPosition | null {
+    return null;
+  }
+
   equityCurve(): EquitySnapshot[] {
     return this._equity;
   }

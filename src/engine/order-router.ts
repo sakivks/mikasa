@@ -23,6 +23,11 @@ export class OrderRouter {
     return id;
   }
 
+  // Stub: real implementation lands in Task 10 (multi-leg routing).
+  submitMultiLeg(_order: Omit<import('../types/options').MultiLegOrder, 'id' | 'ts'>): string {
+    throw new Error('submitMultiLeg not yet implemented (Task 9)');
+  }
+
   queued(): Order[] {
     return this._queue;
   }
