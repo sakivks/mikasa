@@ -88,6 +88,7 @@ describe('backtest e2e', () => {
     });
     expect(res.runId).toMatch(/SmaCrossover/);
     expect(Number.isFinite(res.finalEquity)).toBe(true);
+    expect(res.finalEquity).toBeCloseTo(93975.69534317029, 2);
     const html = readFileSync(res.reportPath, 'utf8');
     expect(html).toContain('SmaCrossover');
     expect(html).toContain('Equity Curve');

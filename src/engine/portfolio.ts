@@ -36,6 +36,9 @@ export class Portfolio {
     const fees = fill.fees.total;
     const pos = this._positions.get(fill.symbol);
     if (fill.side === OrderSide.BUY) {
+      if (this._cash < notional + fees) {
+        throw new Error(`insufficient cash to buy ${fill.qty} of ${fill.symbol} at ${fill.price} (have ${this._cash}, need ${notional + fees})`);
+      }
       this._cash -= notional + fees;
       if (!pos) {
         this._positions.set(fill.symbol, { symbol: fill.symbol, qty: fill.qty, avgPrice: fill.price });
@@ -60,17 +63,19 @@ export class Portfolio {
 
   markToMarket(prices: Map<string, number>, ts: Date): EquitySnapshot {
     let unrealized = 0;
+    let positionsMarketValue = 0;
     for (const p of this._positions.values()) {
       const px = prices.get(p.symbol);
       if (px === undefined) continue;
       unrealized += (px - p.avgPrice) * p.qty;
+      positionsMarketValue += px * p.qty;
     }
     const snap: EquitySnapshot = {
       ts,
       cash: this._cash,
       unrealized,
       realized: this._realized,
-      equity: this._cash + unrealized + this._realized,
+      equity: this._cash + positionsMarketValue,
     };
     this._equity.push(snap);
     return snap;

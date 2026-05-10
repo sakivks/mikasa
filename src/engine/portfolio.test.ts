@@ -57,12 +57,30 @@ describe('Portfolio', () => {
     p.markToMarket(new Map([['R', 105]]), new Date('2025-01-02T04:00:00Z'));
     const snap = p.equityCurve()[p.equityCurve().length - 1]!;
     expect(snap.unrealized).toBeCloseTo(50);
-    expect(snap.equity).toBeCloseTo(p.cash + 50 + p.realizedPnL);
+    expect(snap.equity).toBeCloseTo(p.cash + 10 * 105); // cost basis + unrealized gain = qty * mark
   });
 
   it('rejects sell of qty exceeding position (caller should pre-check)', () => {
     const p = new Portfolio(100_000);
     p.applyFill(fill('buy', 5, 100));
     expect(() => p.applyFill(fill('sell', 10, 110))).toThrow(/insufficient/i);
+  });
+
+  it('after full round-trip close, equity == initialCapital + sum(realized over trades) ignoring inter-bar marks', () => {
+    const p = new Portfolio(100_000);
+    p.applyFill(fill('buy', 10, 100, fee(20)));
+    p.applyFill(fill('sell', 10, 110, fee(15)));
+    // No open positions. Mark-to-market has no positions to value.
+    p.markToMarket(new Map(), new Date('2025-01-02T04:00:00Z'));
+    const last = p.equityCurve()[p.equityCurve().length - 1]!;
+    // True equity after a fully-closed round-trip = cash, with positions all 0.
+    expect(last.equity).toBeCloseTo(p.cash);
+    // And cash should equal initial + (sell − buy) × qty − total fees
+    expect(p.cash).toBeCloseTo(100_000 + (110 - 100) * 10 - 20 - 15);
+  });
+
+  it('insufficient cash on BUY throws', () => {
+    const p = new Portfolio(1000);
+    expect(() => p.applyFill(fill('buy', 100, 100, fee(0)))).toThrow(/insufficient cash/i);
   });
 });
