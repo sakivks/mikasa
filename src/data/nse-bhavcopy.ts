@@ -25,7 +25,9 @@ function parseExpiry(s: string): Date {
 
 export function parseBhavcopy(csvPath: string): BhavcopyRow[] {
   const text = fs.readFileSync(csvPath, 'utf8');
-  const lines = text.trim().split('\n');
+  const stripped = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+  const normalized = stripped.replace(/\r\n?/g, '\n');
+  const lines = normalized.trim().split('\n');
   const header = lines[0]!.split(',').map((s) => s.trim());
   const idx = (col: string): number => {
     const i = header.indexOf(col);
@@ -44,12 +46,14 @@ export function parseBhavcopy(csvPath: string): BhavcopyRow[] {
     if (cells[cInst] !== 'OPTIDX') continue;
     const sym = cells[cSym]!;
     if (sym !== 'NIFTY' && sym !== 'BANKNIFTY') continue;
+    const t = cells[cType];
+    if (t !== 'CE' && t !== 'PE') continue;
     rows.push({
       underlying: sym,
       symbol: sym,
       expiry: parseExpiry(cells[cExp]!),
       strike: parseFloat(cells[cStrike]!),
-      optionType: cells[cType] as OptionType,
+      optionType: t,
     });
   }
   return rows;
