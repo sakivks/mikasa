@@ -3,12 +3,16 @@ import { SmaCrossover } from './sma-crossover';
 import { ORB } from './orb';
 import { RsiMeanRev } from './rsi-mean-rev';
 import { BollingerReversion } from './bollinger-reversion';
+import { DailyTrend } from './daily-trend';
+import { BuyAndHold } from './buy-and-hold';
 
 const REGISTRY: Record<string, StrategyConstructor> = {
   SmaCrossover,
   ORB,
   RsiMeanRev,
   BollingerReversion,
+  DailyTrend,
+  BuyAndHold,
 };
 
 export function resolveStrategy(name: string): StrategyConstructor {

@@ -2,7 +2,7 @@ import { OrderSide, OrderStatus, OrderType, type Order, type OrderIntent, type P
 import { isSquareoffBarIST } from '../util/time';
 
 export interface OrderRouterOpts {
-  squareoffTime: string; // 'HH:mm' IST
+  squareoffTime: string | null; // 'HH:mm' IST, or null to disable
 }
 
 export class OrderRouter {
@@ -33,6 +33,7 @@ export class OrderRouter {
   }
 
   maybeSquareoff(barTs: Date, positions: Position[]): void {
+    if (!this.opts.squareoffTime) return;
     if (!isSquareoffBarIST(barTs, this.opts.squareoffTime)) return;
     if (this.squareoffEmittedAt === barTs.getTime()) return;
     this.squareoffEmittedAt = barTs.getTime();

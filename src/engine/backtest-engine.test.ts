@@ -118,6 +118,40 @@ describe('BacktestEngine', () => {
     expect(() => engine.run()).not.toThrow();
   });
 
+  it('fills multi-symbol orders against the order symbol\'s next bar, not whatever bar is current', () => {
+    // Two symbols, A and B, interleaved by ts. A submits at t=1; the fill must
+    // use A's t=2 open (200), not B's t=2 open (50). Regression test for a
+    // bug where the engine processed orders against any bar, including bars
+    // for other symbols.
+    const mkA = (ts: string, open: number): Candle => ({
+      symbol: 'A', ts: new Date(ts), interval: 'day', open, high: open, low: open, close: open, volume: 1,
+    });
+    const mkB = (ts: string, open: number): Candle => ({
+      symbol: 'B', ts: new Date(ts), interval: 'day', open, high: open, low: open, close: open, volume: 1,
+    });
+    const candles: Candle[] = [
+      mkA('2025-01-02T00:00:00Z', 100),
+      mkB('2025-01-02T00:00:00Z', 10),
+      mkA('2025-01-03T00:00:00Z', 200), // A's "next bar" after submit
+      mkB('2025-01-03T00:00:00Z', 50),
+    ];
+    class BuyAonceStrategy extends Strategy {
+      private done = false;
+      init(): void {}
+      onBar(bar: Candle, ctx: StrategyContext): void {
+        if (!this.done && bar.symbol === 'A') {
+          ctx.submitOrder({ symbol: 'A', side: OrderSide.BUY, qty: 1, type: OrderType.MARKET });
+          this.done = true;
+        }
+      }
+    }
+    const engine = makeEngine(new BuyAonceStrategy(), candles);
+    const result = engine.run();
+    expect(result.fills.length).toBe(1);
+    expect(result.fills[0]!.symbol).toBe('A');
+    expect(result.fills[0]!.price).toBe(200); // would be 50 (B's open) if buggy
+  });
+
   it('records equity snapshots per bar', () => {
     const candles = [
       cb('2025-01-02T03:45:00Z', 100),
