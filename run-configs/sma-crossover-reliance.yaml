@@ -1,0 +1,14 @@
+strategy: SmaCrossover
+params:
+  fast: 9
+  slow: 21
+symbols: [RELIANCE]
+from: 2025-01-01
+to: 2025-01-31
+interval: 5minute
+capital: 100000
+slippage_bps: 5
+brokerage: zerodha-intraday
+warmup_bars: 200
+squareoff_time: "15:15"
+seed: 42
