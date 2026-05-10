@@ -24,6 +24,12 @@ export class DailyTrend extends Strategy {
   private slow = 50;
   private fraction = 0.2;
   private readonly state = new Map<string, State>();
+  // Buys queued but not yet filled in the CURRENT bar. Resets when bar ts
+  // advances (engine processes pending orders before onBar, so prior bar's
+  // queue has resolved). Without this, multiple cross-ups on the same bar
+  // would all see full cash and over-allocate.
+  private pendingThisBar = 0;
+  private currentBarTs: number | undefined;
 
   init(ctx: StrategyContext): void {
     this.symbols = (ctx.params.symbols as string[] | undefined) ?? [];
@@ -42,6 +48,11 @@ export class DailyTrend extends Strategy {
   }
 
   onBar(bar: Candle, ctx: StrategyContext): void {
+    const barTs = bar.ts.getTime();
+    if (this.currentBarTs !== barTs) {
+      this.currentBarTs = barTs;
+      this.pendingThisBar = 0;
+    }
     const st = this.state.get(bar.symbol);
     if (!st) return;
     st.lastClose = bar.close;
@@ -63,7 +74,8 @@ export class DailyTrend extends Strategy {
     if (crossUp && (!pos || pos.qty <= 0)) {
       const equity = this.computeEquity(ctx);
       const targetNotional = equity * this.fraction;
-      const cashCap = ctx.cash * 0.95; // small headroom for fees + slippage
+      const availableCash = Math.max(0, ctx.cash - this.pendingThisBar);
+      const cashCap = availableCash * 0.95; // headroom for fees + slippage
       const notional = Math.min(targetNotional, cashCap);
       const qty = Math.floor(notional / bar.close);
       if (qty > 0) {
@@ -74,6 +86,7 @@ export class DailyTrend extends Strategy {
           type: OrderType.MARKET,
           tag: 'trend_up',
         });
+        this.pendingThisBar += qty * bar.close;
       }
     } else if (crossDown && pos && pos.qty > 0) {
       ctx.submitOrder({
