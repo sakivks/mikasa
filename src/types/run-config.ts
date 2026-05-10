@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 const intervalEnum = z.enum(['1minute', '3minute', '5minute', '10minute', '15minute', '30minute', '60minute', 'day']);
 const brokerageEnum = z.enum(['zerodha-intraday', 'zero']);
+const sourceEnum = z.enum(['kite', 'yahoo']);
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be YYYY-MM-DD');
 const hhmmStr = z.string().regex(/^\d{2}:\d{2}$/, 'must be HH:mm');
 
@@ -18,6 +19,7 @@ export const RunConfigSchema = z
     capital: z.number().positive(),
     slippage_bps: z.number().min(0).max(1000),
     brokerage: brokerageEnum,
+    source: sourceEnum.default('kite'),
     warmup_bars: z.number().int().min(0).default(200),
     squareoff_time: hhmmStr.default('15:15'),
     seed: z.number().int().nonnegative(),

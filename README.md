@@ -12,6 +12,21 @@ pnpm cli -- backtest run-configs/sma-crossover-reliance.yaml
 open reports/<run-id>.html
 ```
 
+## Data sources
+
+The bot supports two historical data sources:
+
+- `kite` (default): Zerodha Kite Connect. Requires API credentials in `.env`. Larger lookback, paid subscription.
+- `yahoo`: Yahoo Finance via `yahoo-finance2`. Free, no credentials. Limited to ~60 days for intraday intervals; lower data quality.
+
+Select per run-config:
+
+```yaml
+source: yahoo
+```
+
+Or per `fetch` invocation: `pnpm cli fetch RELIANCE 2025-01-01 2025-01-31 5minute --source yahoo`.
+
 ## Commands
 
 - `pnpm cli -- fetch <symbol> <from> <to> <interval>` — fetch and cache historical candles

@@ -27,21 +27,26 @@ program
   .argument('<to>', 'YYYY-MM-DD')
   .argument('<interval>', '1minute|5minute|15minute|day|...')
   .option('--exchange <ex>', 'exchange', 'NSE')
+  .option('--source <src>', 'data source: kite | yahoo', 'kite')
   .action(
     async (
       symbol: string,
       from: string,
       to: string,
       interval: string,
-      opts: { exchange: string },
+      opts: { exchange: string; source: string },
     ) => {
       ensureDataDir();
       const logger = createLogger({ runId: makeRunId('fetch') });
+      if (opts.source !== 'kite' && opts.source !== 'yahoo') {
+        throw new Error(`invalid --source: ${opts.source} (expected 'kite' or 'yahoo')`);
+      }
       const n = await fetchCandles({
         dbPath: DB_PATH,
         instrumentsPath: INSTRUMENTS_PATH,
         symbol,
         exchange: opts.exchange,
+        source: opts.source,
         from: new Date(`${from}T00:00:00Z`),
         to: new Date(`${to}T00:00:00Z`),
         interval: interval as Interval,

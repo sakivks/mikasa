@@ -66,6 +66,23 @@ describe('RunConfigSchema', () => {
     ).toThrow(/from/);
   });
 
+  it('source defaults to kite, accepts yahoo', () => {
+    const cfg = RunConfigSchema.parse({
+      strategy: 'X', params: {}, symbols: ['A'],
+      from: '2025-01-01', to: '2025-01-31', interval: '5minute',
+      capital: 100000, slippage_bps: 0, brokerage: 'zerodha-intraday', seed: 0,
+    });
+    expect(cfg.source).toBe('kite');
+
+    const cfgYahoo = RunConfigSchema.parse({
+      strategy: 'X', params: {}, symbols: ['A'],
+      from: '2025-01-01', to: '2025-01-31', interval: '5minute',
+      capital: 100000, slippage_bps: 0, brokerage: 'zerodha-intraday', seed: 0,
+      source: 'yahoo',
+    });
+    expect(cfgYahoo.source).toBe('yahoo');
+  });
+
   it('rejects empty symbols', () => {
     expect(() =>
       RunConfigSchema.parse({

@@ -4,6 +4,8 @@ import { CandleStore } from '../../data/candle-store';
 import { InstrumentStore } from '../../data/instrument-store';
 import { KiteClient } from '../../data/kite-client';
 import { KiteSource } from '../../data/kite-source';
+import { YahooSource } from '../../data/yahoo-source';
+import type { HistoricalSource } from '../../data/source';
 import { DataLoader } from '../../data/data-loader';
 import { BacktestEngine } from '../../engine/backtest-engine';
 import { Portfolio } from '../../engine/portfolio';
@@ -45,24 +47,29 @@ export async function runBacktestCli(
     const to = new Date(`${cfg.to}T00:00:00Z`);
 
     if (args.fetchOnDemand) {
-      const env = parseEnv();
-      const kite = new KiteConnect({ api_key: env.KITE_API_KEY });
-      kite.setAccessToken(env.KITE_ACCESS_TOKEN);
-      const client = new KiteClient({
-        kite: {
-          getHistoricalData: (token, interval, from, to) =>
-            // Cast through unknown: SDK's interval union doesn't include '1minute' but the live API accepts it.
-            (
-              kite.getHistoricalData as unknown as (
-                token: number | string,
-                interval: string,
-                from: Date | string,
-                to: Date | string,
-              ) => Promise<unknown[]>
-            )(token, interval, from, to),
-        },
-      });
-      const source = new KiteSource({ kite: client, instruments: instrumentStore, exchange: 'NSE' });
+      let source: HistoricalSource;
+      if (cfg.source === 'yahoo') {
+        source = new YahooSource();
+      } else {
+        const env = parseEnv();
+        const kite = new KiteConnect({ api_key: env.KITE_API_KEY });
+        kite.setAccessToken(env.KITE_ACCESS_TOKEN);
+        const client = new KiteClient({
+          kite: {
+            getHistoricalData: (token, interval, from, to) =>
+              // Cast through unknown: SDK's interval union doesn't include '1minute' but the live API accepts it.
+              (
+                kite.getHistoricalData as unknown as (
+                  token: number | string,
+                  interval: string,
+                  from: Date | string,
+                  to: Date | string,
+                ) => Promise<unknown[]>
+              )(token, interval, from, to),
+          },
+        });
+        source = new KiteSource({ kite: client, instruments: instrumentStore, exchange: 'NSE' });
+      }
       const loader = new DataLoader({ source, store: candleStore });
       for (const symbol of cfg.symbols) {
         const bars = await loader.load(symbol, fromWithWarmup, to, cfg.interval);
