@@ -128,6 +128,7 @@ export async function runBacktestCli(
       metrics,
       equityCurve: result.equityCurve,
       trades,
+      fills: result.fills,
     });
 
     mkdirSync(args.reportsDir, { recursive: true });
