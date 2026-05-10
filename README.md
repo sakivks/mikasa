@@ -27,6 +27,19 @@ source: yahoo
 
 Or per `fetch` invocation: `pnpm cli fetch RELIANCE 2025-01-01 2025-01-31 5minute --source yahoo`.
 
+### Daily Kite auth
+
+Kite access tokens expire every morning around 06:00 IST. Daily flow:
+
+```bash
+# 1. Print login URL (or open it manually in a browser)
+pnpm cli auth --login
+
+# 2. Login to Zerodha; browser redirects to your app URL with ?request_token=<TOKEN>
+# 3. Exchange the request_token for a fresh access_token (writes to .env automatically)
+pnpm cli auth <request_token>
+```
+
 ## Commands
 
 - `pnpm cli -- fetch <symbol> <from> <to> <interval>` — fetch and cache historical candles
