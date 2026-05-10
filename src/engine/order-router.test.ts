@@ -43,6 +43,13 @@ describe('OrderRouter', () => {
     expect(r.queued().length).toBe(0);
   });
 
+  it('does not emit squareoff when squareoffTime is null', () => {
+    const r = new OrderRouter({ squareoffTime: null });
+    const ts = new Date('2025-01-02T09:45:00Z'); // would be 15:15 IST
+    r.maybeSquareoff(ts, [pos(10), { symbol: 'I', qty: -5, avgPrice: 1000 }]);
+    expect(r.queued().length).toBe(0);
+  });
+
   it('idempotent squareoff: calling at same bar twice does not double-emit', () => {
     const r = new OrderRouter({ squareoffTime: '15:15' });
     const ts = new Date('2025-01-02T09:45:00Z');

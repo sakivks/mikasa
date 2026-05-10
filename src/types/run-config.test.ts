@@ -66,6 +66,23 @@ describe('RunConfigSchema', () => {
     ).toThrow(/from/);
   });
 
+  it('accepts squareoff_time: null and round-trips', () => {
+    const cfg = RunConfigSchema.parse({
+      strategy: 'DailyTrend',
+      params: {},
+      symbols: ['INFY'],
+      from: '2025-01-01',
+      to: '2025-01-31',
+      interval: 'day',
+      capital: 100000,
+      slippage_bps: 0,
+      brokerage: 'zerodha-intraday',
+      squareoff_time: null,
+      seed: 0,
+    });
+    expect(cfg.squareoff_time).toBeNull();
+  });
+
   it('source defaults to kite, accepts yahoo', () => {
     const cfg = RunConfigSchema.parse({
       strategy: 'X', params: {}, symbols: ['A'],

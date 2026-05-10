@@ -21,7 +21,7 @@ export const RunConfigSchema = z
     brokerage: brokerageEnum,
     source: sourceEnum.default('kite'),
     warmup_bars: z.number().int().min(0).default(200),
-    squareoff_time: hhmmStr.default('15:15'),
+    squareoff_time: z.union([hhmmStr, z.null()]).default('15:15'),
     seed: z.number().int().nonnegative(),
   })
   .refine((cfg) => cfg.from <= cfg.to, { message: 'from must be <= to', path: ['from'] });
