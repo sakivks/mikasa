@@ -205,20 +205,6 @@ describe('StrategyContext extensions', () => {
     expect(captured!.lastClose('NEVER')).toBeUndefined();
   });
 
-  it('subscribeOptions accepts a subscription without throwing', () => {
-    class Subscriber extends Strategy {
-      init(ctx: StrategyContext): void {
-        ctx.subscribeOptions({ underlying: 'NIFTY', contracts: [] });
-      }
-      onBar(): void {}
-    }
-    const candles = [
-      cb('2025-01-02T03:45:00Z', 100),
-      cb('2025-01-02T03:50:00Z', 101),
-    ];
-    const engine = makeEngine(new Subscriber(), candles);
-    expect(() => engine.run()).not.toThrow();
-  });
 });
 
 // --- Capital + bankruptcy tests --------------------------------------------------

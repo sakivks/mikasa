@@ -3,7 +3,7 @@ import type { Candle, EquitySnapshot, Fees, Fill, OrderId, OrderIntent, Position
 import { OrderSide, OrderStatus } from '../types';
 import type { Leg, MultiLegOrder, OptionPosition } from '../types/options';
 import type { IndicatorRegistry } from '../indicators/registry';
-import type { OptionSubscription, Strategy, StrategyContext } from '../strategies/strategy';
+import type { Strategy, StrategyContext } from '../strategies/strategy';
 import type { Portfolio } from './portfolio';
 import type { BrokerSim } from './broker-sim';
 import type { OrderRouter } from './order-router';
@@ -85,8 +85,6 @@ export class BacktestEngine {
     const fills: Fill[] = [];
     // Last known close per symbol — used to mark all open positions (not just current bar's symbol).
     const lastCloses = new Map<string, number>();
-    // Option subscriptions captured by strategies during init/onBar; consumed by later tasks.
-    const optionSubs: OptionSubscription[] = [];
     const ctx: StrategyContext = {
       get cash(): number {
         return portfolio.cash;
@@ -102,9 +100,6 @@ export class BacktestEngine {
       optionPosition: (s) => portfolio.optionPosition(s),
       submitMultiLeg: (order) => router.submitMultiLeg(order),
       lastClose: (s) => lastCloses.get(s),
-      subscribeOptions: (sub) => {
-        optionSubs.push(sub);
-      },
     } as StrategyContext;
 
     strategy.init(ctx);

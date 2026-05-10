@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { IronCondor } from './iron-condor';
-import type { StrategyContext, OptionSubscription } from './strategy';
+import type { StrategyContext } from './strategy';
 import type { OptionContract, MultiLegOrder } from '../types/options';
 import { OrderSide, type Candle } from '../types';
 
@@ -56,7 +56,6 @@ function makeCtx(
     },
     cancelOrder: () => {},
     lastClose: (s) => closes.get(s),
-    subscribeOptions: (_: OptionSubscription) => {},
     indicator: {} as never,
     params: {
       entryDay: 'monday',

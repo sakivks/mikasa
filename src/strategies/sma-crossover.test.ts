@@ -26,7 +26,6 @@ function makeCtx(positions: Map<string, Position> = new Map()): {
     optionPosition: () => null,
     submitMultiLeg: () => 'mlg-1',
     lastClose: () => undefined,
-    subscribeOptions: () => {},
   };
   return { ctx, submitted, reg };
 }

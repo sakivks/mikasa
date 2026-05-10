@@ -31,7 +31,6 @@ function makeCtx(
     optionPosition: () => null,
     submitMultiLeg: () => 'mlg-1',
     lastClose: () => undefined,
-    subscribeOptions: () => {},
   };
   return { ctx, submitted, reg, positions };
 }
