@@ -1,6 +1,11 @@
+export type IndicatorOutput =
+  | number
+  | { middle: number; upper: number; lower: number }
+  | undefined;
+
 export interface Indicator {
-  update(price: number): number | undefined;
-  readonly value: number | undefined;
+  update(price: number): IndicatorOutput;
+  readonly value: IndicatorOutput;
 }
 
 export class IndicatorRegistry {

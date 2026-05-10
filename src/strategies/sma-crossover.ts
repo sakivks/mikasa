@@ -26,8 +26,10 @@ export class SmaCrossover extends Strategy {
   }
 
   onBar(bar: Candle, ctx: StrategyContext): void {
-    const fast = ctx.indicator.get(bar.symbol, 'sma_fast')?.value;
-    const slow = ctx.indicator.get(bar.symbol, 'sma_slow')?.value;
+    const fastV = ctx.indicator.get(bar.symbol, 'sma_fast')?.value;
+    const slowV = ctx.indicator.get(bar.symbol, 'sma_slow')?.value;
+    const fast = typeof fastV === 'number' ? fastV : undefined;
+    const slow = typeof slowV === 'number' ? slowV : undefined;
     const st = this.state.get(bar.symbol);
     if (!st || fast === undefined || slow === undefined) return;
     const pf = st.prevFast;

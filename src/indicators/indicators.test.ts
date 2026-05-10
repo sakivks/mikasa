@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { SMA } from './sma';
 import { EMA } from './ema';
 import { RSI } from './rsi';
+import { Bollinger } from './bollinger';
 import { IndicatorRegistry } from './registry';
 
 describe('SMA', () => {
@@ -87,6 +88,53 @@ describe('RSI', () => {
     rsi.update(12);
     rsi.update(13);
     expect(rsi.value).toBe(100);
+  });
+});
+
+describe('Bollinger', () => {
+  it('returns undefined while warming up', () => {
+    const bb = new Bollinger(3, 2);
+    expect(bb.update(10)).toBeUndefined();
+    expect(bb.update(20)).toBeUndefined();
+    expect(bb.update(30)).toBeDefined();
+  });
+
+  it('computes middle/upper/lower from population stddev', () => {
+    const bb = new Bollinger(3, 2);
+    bb.update(10);
+    bb.update(20);
+    const v = bb.update(30)!;
+    // mean = 20, variance = ((10-20)^2 + (20-20)^2 + (30-20)^2) / 3 = 200/3
+    // std = sqrt(200/3) ≈ 8.16497
+    expect(v.middle).toBeCloseTo(20, 9);
+    const expectedStd = Math.sqrt(200 / 3);
+    expect(v.upper).toBeCloseTo(20 + 2 * expectedStd, 9);
+    expect(v.lower).toBeCloseTo(20 - 2 * expectedStd, 9);
+  });
+
+  it('rolls window forward as new prices arrive', () => {
+    const bb = new Bollinger(3, 2);
+    bb.update(10);
+    bb.update(20);
+    bb.update(30);
+    const v = bb.update(40)!;
+    // window now [20, 30, 40], mean=30
+    expect(v.middle).toBeCloseTo(30, 9);
+  });
+
+  it('exposes current value via getter', () => {
+    const bb = new Bollinger(2, 1);
+    bb.update(10);
+    bb.update(20);
+    expect(bb.value).toBeDefined();
+    expect(bb.value!.middle).toBe(15);
+  });
+
+  it('rejects non-positive period or stddev', () => {
+    expect(() => new Bollinger(0)).toThrow();
+    expect(() => new Bollinger(-1)).toThrow();
+    expect(() => new Bollinger(20, 0)).toThrow();
+    expect(() => new Bollinger(20, -1)).toThrow();
   });
 });
 
