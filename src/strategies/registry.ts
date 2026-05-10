@@ -5,6 +5,7 @@ import { RsiMeanRev } from './rsi-mean-rev';
 import { BollingerReversion } from './bollinger-reversion';
 import { DailyTrend } from './daily-trend';
 import { BuyAndHold } from './buy-and-hold';
+import { ShortStraddle } from './short-straddle';
 
 const REGISTRY: Record<string, StrategyConstructor> = {
   SmaCrossover,
@@ -13,6 +14,7 @@ const REGISTRY: Record<string, StrategyConstructor> = {
   BollingerReversion,
   DailyTrend,
   BuyAndHold,
+  ShortStraddle,
 };
 
 export function resolveStrategy(name: string): StrategyConstructor {
