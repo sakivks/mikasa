@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { BacktestEngine } from './backtest-engine';
 import { Portfolio } from './portfolio';
 import { BrokerSim } from './broker-sim';
@@ -7,7 +7,8 @@ import { IndicatorRegistry } from '../indicators/registry';
 import { Strategy, type StrategyContext } from '../strategies/strategy';
 import { zeroBrokerage } from './brokerage/zerodha-intraday';
 import { OrderSide, OrderType, type Candle } from '../types';
-import { createLogger } from '../util/logger';
+import type { OptionContract } from '../types/options';
+import { createLogger, type Logger } from '../util/logger';
 
 class BuyOnceStrategy extends Strategy {
   private bought = false;
@@ -217,5 +218,194 @@ describe('StrategyContext extensions', () => {
     ];
     const engine = makeEngine(new Subscriber(), candles);
     expect(() => engine.run()).not.toThrow();
+  });
+});
+
+// --- Capital + bankruptcy tests --------------------------------------------------
+
+const expiry = new Date('2025-05-29T10:00:00Z');
+const ce: OptionContract = {
+  symbol: 'NIFTY25MAY22000CE',
+  underlying: 'NIFTY',
+  expiry,
+  strike: 22000,
+  optionType: 'CE',
+  lotSize: 75,
+  instrumentToken: 1,
+};
+const pe: OptionContract = {
+  ...ce,
+  symbol: 'NIFTY25MAY22000PE',
+  optionType: 'PE',
+  instrumentToken: 2,
+};
+
+/** Build an option-leg candle on a given symbol/date. */
+const optBar = (symbol: string, ts: string, open: number, close = open): Candle => ({
+  symbol,
+  ts: new Date(ts),
+  interval: '1minute',
+  open,
+  high: Math.max(open, close),
+  low: Math.min(open, close),
+  close,
+  volume: 100,
+});
+
+function spyLogger(): Logger {
+  return {
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    trace: vi.fn(),
+    child: vi.fn(),
+  } as unknown as Logger;
+}
+
+describe('engine: capital + bankruptcy', () => {
+  it('skips multi-leg when projected margin exceeds available cash', () => {
+    // Tiny portfolio — far below the ~₹3.96L margin a NIFTY 22000 short straddle
+    // (75 lot × 12% × 22000 × 2 legs) would attract.
+    const TINY_CAPITAL = 1_000;
+    const portfolio = new Portfolio(TINY_CAPITAL);
+    const broker = new BrokerSim({ slippageBps: 0, brokerage: zeroBrokerage });
+    const router = new OrderRouter({ squareoffTime: null });
+    const registry = new IndicatorRegistry();
+    const logger = spyLogger();
+
+    // Strategy submits a short straddle on the very first bar.
+    class SellStraddleOnce extends Strategy {
+      private submitted = false;
+      init(): void {}
+      onBar(_bar: Candle, ctx: StrategyContext): void {
+        if (this.submitted) return;
+        this.submitted = true;
+        ctx.submitMultiLeg({
+          legs: [
+            { contract: ce, side: OrderSide.SELL, qty: 1 },
+            { contract: pe, side: OrderSide.SELL, qty: 1 },
+          ],
+          reason: 'entry',
+        });
+      }
+    }
+
+    // Two bars per leg-symbol so the multi-leg has a strict next bar.
+    const candles: Candle[] = [
+      optBar(ce.symbol, '2025-05-22T03:45:00Z', 100),
+      optBar(pe.symbol, '2025-05-22T03:45:00Z', 95),
+      optBar(ce.symbol, '2025-05-22T03:50:00Z', 100),
+      optBar(pe.symbol, '2025-05-22T03:50:00Z', 95),
+    ];
+
+    const engine = new BacktestEngine({
+      candles,
+      strategy: new SellStraddleOnce(),
+      portfolio,
+      broker,
+      router,
+      indicators: registry,
+      logger,
+      warmupBars: 0,
+      params: {},
+    });
+    const result = engine.run();
+
+    expect(result.fills).toHaveLength(0);
+    expect(result.bankruptcy).toBeUndefined();
+    // Confirm the structured "insufficient_margin" warn was emitted.
+    const warnCalls = (logger.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const insufficient = warnCalls.find((args) => {
+      const payload = args[0] as { reason?: string } | undefined;
+      return payload?.reason === 'insufficient_margin';
+    });
+    expect(insufficient).toBeDefined();
+  });
+
+  it('detects bankruptcy and forces exit when equity goes non-positive', () => {
+    // Modest capital — enough to seat a 1-lot short straddle on cheap premiums,
+    // but a subsequent ten-fold premium spike will overwhelm equity.
+    const portfolio = new Portfolio(50_000);
+    const broker = new BrokerSim({ slippageBps: 0, brokerage: zeroBrokerage });
+    const router = new OrderRouter({ squareoffTime: null });
+    const registry = new IndicatorRegistry();
+    const logger = spyLogger();
+
+    let postBankruptcyOnBars = 0;
+
+    // To exercise the *bankruptcy* path the entry order must clear the margin
+    // gate. Use a fake low-strike contract so estimateMargin (12% × 100 × 75 ×
+    // 2 legs = ₹1,800) fits well within 50k cash. Then spike premiums later
+    // so MTM tanks equity below zero.
+    const lowCe: OptionContract = { ...ce, symbol: 'TINYCE', strike: 100, instrumentToken: 11 };
+    const lowPe: OptionContract = { ...pe, symbol: 'TINYPE', strike: 100, instrumentToken: 12 };
+
+    class SellTinyStraddle extends Strategy {
+      private submitted = false;
+      init(): void {}
+      onBar(bar: Candle, ctx: StrategyContext): void {
+        if (!this.submitted) {
+          this.submitted = true;
+          ctx.submitMultiLeg({
+            legs: [
+              { contract: lowCe, side: OrderSide.SELL, qty: 1 },
+              { contract: lowPe, side: OrderSide.SELL, qty: 1 },
+            ],
+            reason: 'entry',
+          });
+          return;
+        }
+        if (bar.ts.getTime() >= new Date('2025-05-22T04:00:00Z').getTime()) {
+          postBankruptcyOnBars += 1;
+        }
+      }
+    }
+
+    // Bars (interleaved by symbol):
+    //   t0: open=10 → entry submission
+    //   t1: open=10 → fills at 10/leg (cash credit +1500 per leg, total +3000)
+    //   t2: open=2000 → MTM: short P&L = (10 - 2000) × 75 × 2 = -298,500 → equity nuke
+    //   t3: bars exist so reversals can fill
+    const symC = lowCe.symbol;
+    const symP = lowPe.symbol;
+    const candles: Candle[] = [
+      optBar(symC, '2025-05-22T03:45:00Z', 10),
+      optBar(symP, '2025-05-22T03:45:00Z', 10),
+      optBar(symC, '2025-05-22T03:50:00Z', 10),
+      optBar(symP, '2025-05-22T03:50:00Z', 10),
+      optBar(symC, '2025-05-22T03:55:00Z', 2000, 2000),
+      optBar(symP, '2025-05-22T03:55:00Z', 2000, 2000),
+      optBar(symC, '2025-05-22T04:00:00Z', 2000, 2000),
+      optBar(symP, '2025-05-22T04:00:00Z', 2000, 2000),
+      optBar(symC, '2025-05-22T04:05:00Z', 2000, 2000),
+      optBar(symP, '2025-05-22T04:05:00Z', 2000, 2000),
+    ];
+
+    const engine = new BacktestEngine({
+      candles,
+      strategy: new SellTinyStraddle(),
+      portfolio,
+      broker,
+      router,
+      indicators: registry,
+      logger,
+      warmupBars: 0,
+      params: {},
+    });
+    const result = engine.run();
+
+    expect(result.bankruptcy).toBe(true);
+    // We expect 2 entry fills + 2 reversal fills = 4 total.
+    expect(result.fills.length).toBe(4);
+    const reversalBuys = result.fills.filter((f) => f.side === OrderSide.BUY);
+    expect(reversalBuys.length).toBe(2);
+    // After bankruptcy is declared, no further onBar calls should run.
+    expect(postBankruptcyOnBars).toBe(0);
+    // Sanity: bankruptcy log fired.
+    const errCalls = (logger.error as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const bankruptcyLog = errCalls.find((args) => args[1] === 'bankruptcy: forced exit');
+    expect(bankruptcyLog).toBeDefined();
   });
 });

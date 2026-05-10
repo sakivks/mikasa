@@ -1,12 +1,54 @@
 import type { Logger } from '../util/logger';
 import type { Candle, EquitySnapshot, Fees, Fill, OrderId, OrderIntent, Position } from '../types';
-import { OrderStatus } from '../types';
-import type { MultiLegOrder } from '../types/options';
+import { OrderSide, OrderStatus } from '../types';
+import type { Leg, MultiLegOrder, OptionPosition } from '../types/options';
 import type { IndicatorRegistry } from '../indicators/registry';
 import type { OptionSubscription, Strategy, StrategyContext } from '../strategies/strategy';
 import type { Portfolio } from './portfolio';
 import type { BrokerSim } from './broker-sim';
 import type { OrderRouter } from './order-router';
+import { estimateMargin } from './brokerage/span-margin';
+
+// Conservative one-tick buffer when projecting fill price for the margin gate.
+// 1 NSE F&O tick = ₹0.05.
+const PROJECTED_FILL_TICK = 0.05;
+
+/**
+ * Project the basket margin requirement *after* applying a candidate set of legs
+ * on top of the current option positions. Used by the pre-trade margin gate to
+ * decide whether a multi-leg order can be filled without exceeding available
+ * cash. Mirrors the structure consumed by `estimateMargin` so spread vs naked
+ * classification is preserved.
+ */
+function projectMargin(
+  currentPositions: OptionPosition[],
+  legs: Leg[],
+  fillPrice: (leg: Leg) => number,
+): number {
+  const projected = new Map<string, OptionPosition>();
+  for (const p of currentPositions) {
+    projected.set(p.contract.symbol, { ...p });
+  }
+  for (const leg of legs) {
+    const sign = leg.side === OrderSide.SELL ? -1 : +1;
+    const lots = leg.qty * sign;
+    const existing = projected.get(leg.contract.symbol);
+    if (!existing) {
+      projected.set(leg.contract.symbol, {
+        contract: leg.contract,
+        netQty: lots,
+        avgPrice: fillPrice(leg),
+        realizedPnl: 0,
+      });
+    } else {
+      // avgPrice is only used by estimateMargin for spread credit; keep the
+      // existing avgPrice as a rough approximation — this is a conservative
+      // pre-trade check, not a precise mark.
+      existing.netQty += lots;
+    }
+  }
+  return estimateMargin(Array.from(projected.values()).filter((p) => p.netQty !== 0));
+}
 
 export interface BacktestEngineOpts {
   candles: Candle[]; // sorted ascending by ts; merge across symbols upstream
@@ -24,6 +66,8 @@ export interface BacktestResult {
   fills: Fill[];
   equityCurve: EquitySnapshot[];
   finalEquity: number;
+  /** True when equity went non-positive during the run and forced exits were issued. */
+  bankruptcy?: boolean;
 }
 
 export function runBacktest(opts: BacktestEngineOpts): BacktestResult {
@@ -69,6 +113,9 @@ export class BacktestEngine {
     let pending: ReturnType<OrderRouter['drain']> = [];
     // Pending multi-leg orders waiting for next bars on every leg's symbol.
     let pendingMl: MultiLegOrder[] = [];
+    // Once true, the engine stops feeding new bars to strategy.onBar — only the
+    // forced-exit reversal orders that were submitted at bankruptcy time will fill.
+    let bankrupt = false;
     // Most recent bar seen per symbol — serves as "next bar" for orders submitted in
     // earlier iterations. Updated at the START of each iteration so an ML submitted at
     // bar t becomes eligible to fill at bar t+1 (or later, on a leg's own next bar).
@@ -100,6 +147,29 @@ export class BacktestEngine {
           stillPendingMl.push(ml);
           continue;
         }
+
+        // Pre-trade margin check: project what total basket margin would be
+        // *after* this fill applied to current positions. If it exceeds available
+        // cash, drop the order with a structured warn log — do not retry, do not
+        // partially fill. (estimateMargin classifies spreads vs naked correctly.)
+        // Bypass for forced-exit (bankruptcy) reversals — those must fill so the
+        // portfolio can flatten regardless of current cash state.
+        if (ml.reason !== 'bankruptcy') {
+          const fillPriceFor = (leg: Leg): number => {
+            const candidate = legBars.get(leg.contract.symbol)!;
+            const sign = leg.side === OrderSide.BUY ? +1 : -1;
+            return candidate.open + sign * PROJECTED_FILL_TICK;
+          };
+          const projectedMargin = projectMargin(portfolio.optionPositions(), ml.legs, fillPriceFor);
+          if (projectedMargin > portfolio.cash) {
+            logger.warn(
+              { mlId: ml.id, projectedMargin, cash: portfolio.cash, reason: 'insufficient_margin' },
+              'multi-leg skipped: insufficient_margin',
+            );
+            continue;
+          }
+        }
+
         const res = broker.processMultiLeg(ml, legBars);
         if (res.rejection) {
           logger.warn({ mlId: ml.id, reason: res.rejection.reason }, 'multi-leg order rejected');
@@ -156,8 +226,31 @@ export class BacktestEngine {
       // otherwise other open positions would mark to 0 and corrupt the equity curve / MDD.
       portfolio.markToMarket(lastCloses, bar.ts);
 
+      // Bankruptcy detection: equity ≤ 0 means losses exceeded available capital.
+      // Bundle reversals for every open option position into a single multi-leg
+      // order so they fill atomically on the next bar. After this, the strategy
+      // is suppressed so no new intents are generated, but in-flight reversals
+      // continue to settle.
+      if (!bankrupt) {
+        const curve = portfolio.equityCurve();
+        const last = curve[curve.length - 1];
+        if (last && last.equity <= 0) {
+          bankrupt = true;
+          logger.error({ ts: bar.ts, equity: last.equity }, 'bankruptcy: forced exit');
+          const openPositions = portfolio.optionPositions();
+          if (openPositions.length > 0) {
+            const reversalLegs: Leg[] = openPositions.map((op) => ({
+              contract: op.contract,
+              side: op.netQty > 0 ? OrderSide.SELL : OrderSide.BUY,
+              qty: Math.abs(op.netQty),
+            }));
+            router.submitMultiLeg({ legs: reversalLegs, reason: 'bankruptcy' });
+          }
+        }
+      }
+
       const isWarmup = i < warmupBars;
-      if (!isWarmup) {
+      if (!isWarmup && !bankrupt) {
         // EOD squareoff (queued like any strategy intent; fills on next bar)
         router.maybeSquareoff(bar.ts, portfolio.positions());
 
@@ -207,11 +300,13 @@ export class BacktestEngine {
     }
 
     const equity = portfolio.equityCurve();
-    return {
+    const result: BacktestResult = {
       fills,
       equityCurve: equity,
       finalEquity: equity.length > 0 ? equity[equity.length - 1]!.equity : portfolio.cash,
     };
+    if (bankrupt) result.bankruptcy = true;
+    return result;
   }
 
   private assertMonotonic(candles: Candle[]): void {
